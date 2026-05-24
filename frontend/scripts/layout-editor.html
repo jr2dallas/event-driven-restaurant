@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Restaurant Layout Editor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d0d1a; color: #e0d0ff; font-family: monospace; display: flex; height: 100vh; overflow: hidden; }
+  #sidebar { width: 320px; min-width: 320px; background: #13102a; padding: 16px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; border-right: 2px solid #3a2a6a; }
+  h2 { color: #c8a8ff; font-size: 14px; border-bottom: 1px solid #3a2a6a; padding-bottom: 5px; margin-top: 2px; }
+  .mode-btn { padding: 7px 10px; border: 2px solid #4a3a8a; background: #1e1840; color: #c8a8ff; cursor: pointer; border-radius: 6px; font-size: 12px; text-align: left; transition: all .15s; }
+  .mode-btn:hover { background: #2e2860; }
+  .mode-btn.active { background: #5a3aaa; border-color: #9a6aff; color: white; }
+  .mode-btn .badge { float: right; background: #3a2a7a; border-radius: 10px; padding: 1px 7px; font-size: 10px; }
+  #json-out { background: #0a0818; border: 1px solid #3a2a6a; border-radius: 6px; padding: 8px; font-size: 10px; color: #88ff99; max-height: 220px; overflow-y: auto; white-space: pre; }
+  .action-btn { padding: 7px; border-radius: 6px; cursor: pointer; font-size: 12px; font-family: monospace; }
+  .btn-green  { background: #2a5a2a; border: 1px solid #4a9a4a; color: #88ff99; }
+  .btn-green:hover { background: #3a7a3a; }
+  .btn-blue   { background: #1a3a5a; border: 1px solid #3a6a9a; color: #88ccff; }
+  .btn-blue:hover { background: #2a4a7a; }
+  .btn-red    { background: #3a1a1a; border: 1px solid #7a2a2a; color: #ff6666; }
+  .btn-red:hover { background: #4a2a2a; }
+  .btn-orange { background: #3a2a1a; border: 1px solid #9a6a2a; color: #ffaa44; }
+  .btn-orange:hover { background: #4a3a2a; }
+  .sep { border-top: 1px solid #2a1a4a; margin: 2px 0; }
+  label { font-size: 11px; color: #9888cc; }
+  input[type=range] { width: 100%; }
+  #scale-val { color: #ffdd88; font-size: 11px; }
+  .stats { font-size: 11px; color: #8878aa; padding: 4px 0; }
+  #toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: #2a5a2a; color: #88ff99; padding: 8px 20px; border-radius: 8px; font-size: 13px; font-family: monospace; display: none; z-index: 999; border: 1px solid #4a9a4a; }
+  #canvas-wrap { flex: 1; overflow: auto; position: relative; cursor: crosshair; }
+  canvas { display: block; }
+  #coords { position: fixed; bottom: 10px; right: 10px; background: rgba(0,0,0,.75); padding: 5px 12px; border-radius: 6px; font-size: 12px; color: #ffdd88; pointer-events: none; }
+  .file-row { display: flex; flex-direction: column; gap: 4px; }
+  .file-row input[type=file] { font-size: 10px; color: #c8a8ff; width: 100%; }
+</style>
+</head>
+<body>
+<div id="sidebar">
+  <h2>🗺 Layout Editor</h2>
+
+  <div class="file-row">
+    <label>🖼 Image de fond</label>
+    <input type="file" id="img-file" accept="image/*">
+  </div>
+  <div class="file-row">
+    <label>📂 Charger JSON existant</label>
+    <input type="file" id="json-file" accept=".json">
+  </div>
+
+  <div class="sep"></div>
+  <h2>Mode de placement</h2>
+  <button class="mode-btn active" data-mode="table"           onclick="setMode(this)">🟤 Table           <span class="badge" id="cnt-table">0</span></button>
+  <button class="mode-btn"        data-mode="chair"           onclick="setMode(this)">🪑 Chaise           <span class="badge" id="cnt-chair">0</span></button>
+  <button class="mode-btn"        data-mode="kitchen_station" onclick="setMode(this)">🔥 Poste cuisine    <span class="badge" id="cnt-kitchen_station">0</span></button>
+  <button class="mode-btn"        data-mode="bar"             onclick="setMode(this)">🍷 Bar              <span class="badge" id="cnt-bar">0</span></button>
+  <button class="mode-btn"        data-mode="bar_stool"       onclick="setMode(this)">🪑 Tabouret bar     <span class="badge" id="cnt-bar_stool">0</span></button>
+  <button class="mode-btn"        data-mode="entrance"        onclick="setMode(this)">🚪 Entrée           <span class="badge" id="cnt-entrance">0</span></button>
+  <button class="mode-btn"        data-mode="queue_start"     onclick="setMode(this)">🧍 Spawn haut       <span class="badge" id="cnt-queue_start">0</span></button>
+  <button class="mode-btn"        data-mode="queue_end"       onclick="setMode(this)">🧍 Spawn bas        <span class="badge" id="cnt-queue_end">0</span></button>
+  <button class="mode-btn"        data-mode="obstacle"        onclick="setMode(this)">🚧 Obstacle         <span class="badge" id="cnt-obstacle">0</span></button>
+  <button class="mode-btn"        data-mode="plant"           onclick="setMode(this)">🌿 Plante           <span class="badge" id="cnt-plant">0</span></button>
+
+  <div class="sep"></div>
+  <div>
+    <label>Zoom  <span id="scale-val">100%</span></label>
+    <input type="range" id="zoom" min="25" max="200" value="100" oninput="setZoom(this.value)">
+  </div>
+
+  <div class="sep"></div>
+  <button class="action-btn btn-orange" onclick="undo()">↩ Annuler dernier</button>
+  <button class="action-btn btn-red"    onclick="clearAll()">🗑 Tout effacer</button>
+
+  <div class="sep"></div>
+  <h2>JSON exporté</h2>
+  <div id="json-out">{}</div>
+  <button class="action-btn btn-green" onclick="copyJson()">📋 Copier JSON</button>
+  <button class="action-btn btn-blue"  onclick="downloadJson()">💾 Télécharger JSON</button>
+
+  <div class="sep"></div>
+  <div class="stats" id="stats">Aucun élément placé</div>
+</div>
+
+<div id="canvas-wrap"><canvas id="c"></canvas></div>
+<div id="coords">x: — y: —</div>
+<div id="toast"></div>
+
+<script>
+const SIZES = {
+  table:30, chair:11, kitchen_station:27, bar:40,
+  bar_stool:10, entrance:15, queue_start:12, queue_end:12,
+  obstacle:20, plant:13
+};
+const COLORS = {
+  table:'#c87a30', chair:'#8a5a20', kitchen_station:'#ff8800',
+  bar:'#8B4513', bar_stool:'#6b3a10', entrance:'#00cc66',
+  queue_start:'#00aaff', queue_end:'#0066cc',
+  obstacle:'#cc2222', plant:'#22aa44'
+};
+const LABELS = {
+  table:'T', chair:'C', kitchen_station:'K', bar:'BAR',
+  bar_stool:'BS', entrance:'ENT', queue_start:'QS',
+  queue_end:'QE', obstacle:'OBS', plant:'PLT'
+};
+
+let mode='table', scale=1, elements=[], img=null, canvas, ctx;
+// counters tracks the max index used per type (for unique IDs)
+let counters = {};
+Object.keys(SIZES).forEach(k => counters[k]=0);
+
+function toast(msg, color='#88ff99') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.color = color; t.style.display = 'block';
+  setTimeout(() => t.style.display='none', 2000);
+}
+
+window.onload = () => {
+  canvas = document.getElementById('c');
+  ctx = canvas.getContext('2d');
+  canvas.width=800; canvas.height=600;
+  drawAll();
+
+  // Chargement image
+  document.getElementById('img-file').onchange = e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      img = new Image();
+      img.onload = () => { canvas.width=img.width; canvas.height=img.height; drawAll(); toast('🖼 Image chargée'); };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // ── Chargement JSON existant ──────────────────────────────
+  document.getElementById('json-file').onchange = e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const json = JSON.parse(ev.target.result);
+        loadFromJson(json);
+        toast(`✅ JSON chargé — ${elements.length} éléments`);
+      } catch(err) {
+        toast('❌ JSON invalide : ' + err.message, '#ff6666');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  canvas.addEventListener('mousemove', e => {
+    const r = canvas.getBoundingClientRect();
+    const x = Math.round((e.clientX-r.left)/scale);
+    const y = Math.round((e.clientY-r.top)/scale);
+    document.getElementById('coords').textContent = `x: ${x}  y: ${y}`;
+  });
+
+  canvas.addEventListener('click', e => {
+    const r = canvas.getBoundingClientRect();
+    const x = Math.round((e.clientX-r.left)/scale);
+    const y = Math.round((e.clientY-r.top)/scale);
+    counters[mode]++;
+    const id = mode+'_'+counters[mode];
+    elements.push({ id, type:mode, x, y, r:SIZES[mode] });
+    updateCounts(); drawAll(); exportJson();
+  });
+};
+
+// ── Import JSON → elements ─────────────────────────────────
+function loadFromJson(json) {
+  elements = [];
+  Object.keys(SIZES).forEach(k => counters[k]=0);
+
+  for (const [typeKey, arr] of Object.entries(json)) {
+    if (!Array.isArray(arr)) continue;
+    if (!(typeKey in SIZES)) continue;
+    for (const el of arr) {
+      // Récupère le numéro depuis l'id si présent pour éviter les doublons
+      const num = el.id ? parseInt(el.id.split('_').pop()) : null;
+      if (num && num > (counters[typeKey]||0)) counters[typeKey] = num;
+      elements.push({
+        id:   el.id || (typeKey+'_'+(++counters[typeKey])),
+        type: typeKey,
+        x:    el.x,
+        y:    el.y,
+        r:    el.r ?? SIZES[typeKey]
+      });
+    }
+  }
+  updateCounts(); drawAll(); exportJson();
+}
+
+function setMode(btn) {
+  mode = btn.dataset.mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function setZoom(v) {
+  scale = v/100;
+  document.getElementById('scale-val').textContent = v+'%';
+  canvas.style.transform = `scale(${scale})`;
+  canvas.style.transformOrigin = 'top left';
+  canvas.parentElement.style.minWidth  = (canvas.width*scale)+'px';
+  canvas.parentElement.style.minHeight = (canvas.height*scale)+'px';
+}
+
+function drawAll() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if (img) ctx.drawImage(img,0,0);
+  else {
+    ctx.fillStyle='#1a1030'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle='#3a2a6a'; ctx.font='18px monospace';
+    ctx.fillText('← Charger une image + optionnellement un JSON existant', 30, canvas.height/2);
+  }
+  elements.forEach(el => {
+    ctx.beginPath();
+    ctx.arc(el.x, el.y, el.r, 0, Math.PI*2);
+    ctx.fillStyle = COLORS[el.type]+'bb';
+    ctx.fill();
+    ctx.strokeStyle='white'; ctx.lineWidth=2; ctx.stroke();
+    ctx.fillStyle='white';
+    ctx.font = `bold ${Math.max(9, el.r*0.7)}px monospace`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(LABELS[el.type]+(el.id.split('_').pop()), el.x, el.y);
+  });
+}
+
+function updateCounts() {
+  Object.keys(SIZES).forEach(k => {
+    const el = document.getElementById('cnt-'+k);
+    if (el) el.textContent = elements.filter(e=>e.type===k).length;
+  });
+  document.getElementById('stats').textContent = `${elements.length} élément(s) placé(s)`;
+}
+
+function exportJson() {
+  const grouped={};
+  elements.forEach(el => {
+    if (!grouped[el.type]) grouped[el.type]=[];
+    grouped[el.type].push({id:el.id, x:el.x, y:el.y, r:el.r});
+  });
+  document.getElementById('json-out').textContent = JSON.stringify(grouped,null,2);
+  return grouped;
+}
+
+function copyJson() {
+  navigator.clipboard.writeText(document.getElementById('json-out').textContent);
+  toast('📋 JSON copié !');
+}
+
+function downloadJson() {
+  const blob = new Blob([document.getElementById('json-out').textContent],{type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'restaurant-layout.json';
+  a.click();
+  toast('💾 JSON téléchargé !');
+}
+
+function undo() {
+  if (!elements.length) return;
+  const last = elements.pop();
+  // Recalcule le max counter pour ce type
+  counters[last.type] = elements.filter(e=>e.type===last.type).reduce((max,e)=>{
+    const n=parseInt(e.id.split('_').pop()); return n>max?n:max;
+  }, 0);
+  updateCounts(); drawAll(); exportJson();
+  toast('↩ Annulé : '+last.id, '#ffaa44');
+}
+
+function clearAll() {
+  if (!confirm('Effacer tous les éléments ?')) return;
+  elements=[];
+  Object.keys(SIZES).forEach(k=>counters[k]=0);
+  updateCounts(); drawAll(); exportJson();
+  toast('🗑 Tout effacé', '#ff8888');
+}
+</script>
+</body>
+</html>

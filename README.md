@@ -123,12 +123,48 @@ event-driven-restaurant/
 │       ├── controllers/          # Internal state endpoint + GlobalExceptionHandler
 │       └── services/             # KitchenService, OrderConsumer
 ├── frontend/                     # React 19 + PixiJS 8 + Zustand
+│   ├── scripts/
+│   │   └── layout-editor.html   # Visual editor — generates restaurant-layout.json
 │   └── src/
 │       ├── components/           # LeftPanel (controls), RightPanel (metrics)
 │       ├── pathfinding/          # A* nav grid + seat resolver
 │       └── store/                # Zustand stores (restaurant state, waiter sprites)
 └── docker-compose.yml
 ```
+
+---
+
+## Layout editor
+
+`frontend/scripts/layout-editor.html` is a standalone visual tool for mapping a restaurant floor plan image to the constraint file consumed by the pathfinding engine.
+
+**Open it directly in a browser — no server or dependencies required.**
+
+![Layout editor](docs/layout-editor.png)
+
+### Workflow
+
+1. Load any restaurant image as background
+2. Click to place elements on the canvas (tables, chairs, kitchen stations, obstacles, entrance, queue spawn points, etc.)
+3. Each click generates a typed, auto-incremented ID (`chair_1`, `table_2`, …)
+4. Zoom in/out for precision placement — pixel coordinates are shown in real time
+5. Undo last placement or clear all if needed
+6. Load an existing JSON to continue editing a previous layout
+7. Download `restaurant-layout.json`
+
+### Output format
+
+```json
+{
+  "chair":           [{ "id": "chair_1",   "x": 312, "y": 204, "r": 11 }],
+  "table":           [{ "id": "table_1",   "x": 312, "y": 180, "r": 30 }],
+  "kitchen_station": [{ "id": "kitchen_station_1", "x": 600, "y": 100, "r": 27 }],
+  "entrance":        [{ "id": "entrance_1", "x": 80,  "y": 448, "r": 15 }],
+  "obstacle":        [{ "id": "obstacle_1", "x": 150, "y": 300, "r": 20 }]
+}
+```
+
+This file is consumed by `buildNavGrid.ts` (which converts each element to blocked/passable tiles on the A\* grid) and `resolveSeatsFromLayout.ts` (which pre-computes waiter service positions for each chair).
 
 ---
 
