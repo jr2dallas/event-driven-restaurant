@@ -1,0 +1,49 @@
+spring:
+  application:
+    name: kitchen-service
+  profiles:
+    default: dev
+  kafka:
+    bootstrap-servers: localhost:9093
+    consumer:
+      group-id: kitchen-group
+      auto-offset-reset: latest
+      enable-auto-commit: false
+      key-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.key.delegate.class: org.apache.kafka.common.serialization.StringDeserializer
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.trusted.packages: "fr.jr2dallas.generated.model"
+        spring.json.value.default.type: fr.jr2dallas.generated.model.OrderMessage
+        spring.json.use.type.headers: false
+        max.poll.records: 1
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    listener:
+      ack-mode: RECORD
+
+  cloud:
+    consul:
+      discovery:
+        health-check-path: /actuator/health
+        instance-id: ${spring.application.name}-${random.uuid}
+        deregister-critical-services-after: 20s
+        catalog-services-watch-enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus
+  endpoint:
+    health:
+      show-details: always
+
+server:
+  port: 8081
+
+kitchen:
+  cooking:
+    duration-ms: 5000

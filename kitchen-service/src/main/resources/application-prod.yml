@@ -1,0 +1,9 @@
+management:
+  tracing:
+    sampling:
+      probability: 0.1
+
+logging:
+  level:
+    root: WARN
+    fr.jr2dallas: INFO

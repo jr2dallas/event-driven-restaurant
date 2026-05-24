@@ -1,0 +1,480 @@
+openapi: "3.0.3"
+info:
+  title: Restaurant Service API
+  description: >
+    REST contracts and Kafka message schemas for the restaurant-service.
+    The kitchen-service is not directly accessible from the front —
+    all kitchen state queries are proxied through restaurant-service.
+    Kafka topics (orders.in, orders.ready)
+  version: 0.4.0
+
+tags:
+  - name: restaurant
+    description: Restaurant floor and client management
+  - name: waiters
+    description: Waiter lifecycle callbacks (triggered by front animations)
+  - name: kitchen
+    description: Kitchen state proxied from kitchen-service instances
+  - name: metrics
+    description: Observability metrics
+
+paths:
+
+  # ── Restaurant state ──────────────────────────────────────────
+
+  /internal/restaurant/state:
+    get:
+      tags: [restaurant]
+      operationId: getRestaurantState
+      summary: Get the current state of the restaurant floor
+      responses:
+        "200":
+          description: Current restaurant state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestaurantState'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  # ── Clients ──────────────────────────────────────────────────
+
+  /internal/restaurant/clients:
+    post:
+      tags: [restaurant]
+      operationId: enqueueClient
+      summary: Spawn a new client
+      responses:
+        "201":
+          description: Client successfully registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientEnqueuedResponse'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /internal/restaurant/clients/batch:
+    post:
+      tags: [restaurant]
+      operationId: enqueueClientBatch
+      summary: Spawn multiple clients at once, with an optional tag
+      parameters:
+        - name: count
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 500
+        - name: tag
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+      responses:
+        "201":
+          description: Clients spawned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpawnResponse'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /internal/restaurant/clients/{clientId}/state:
+    put:
+      tags: [restaurant]
+      operationId: updateClientState
+      summary: >
+        Front drives the client state machine via animation callbacks.
+        Valid transitions: QUEUING → AT_ENTRANCE, WALKING_TO_SEAT → SEATED, LEAVING → DESPAWNED.
+        Unknown clientIds are treated as already cleaned up and return 200 (idempotent).
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientStateUpdate'
+      responses:
+        "200":
+          description: State updated
+        "400":
+          description: Invalid or disallowed transition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Unknown clientId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  # ── Waiters ───────────────────────────────────────────────────
+
+  /internal/restaurant/waiters/{waiterId}/state:
+    put:
+      tags: [waiters]
+      operationId: updateWaiterState
+      summary: >
+        Front drives the waiter state machine via animation callbacks.
+        Valid transitions: WALKING_TO_CLIENT → TAKING_ORDER, TAKING_ORDER → WALKING_TO_KITCHEN,
+        DELIVERING → IDLE (dish delivered), WALKING_TO_KITCHEN → IDLE (order dropped off).
+      parameters:
+        - name: waiterId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WaiterStateUpdate'
+      responses:
+        "200":
+          description: State updated
+        "400":
+          description: Invalid or disallowed transition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Unknown waiterId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /internal/restaurant/waiters/count:
+    put:
+      tags: [waiters]
+      operationId: updateWaiterCount
+      summary: Adjust the number of active waiter workers
+      parameters:
+        - name: count
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 50
+      responses:
+        "204":
+          description: Waiter count updated
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  /internal/restaurant/waiters:
+    post:
+      tags: [waiters]
+      operationId: hireWaiter
+      summary: Hire one additional waiter
+      responses:
+        "204":
+          description: Waiter hired
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags: [waiters]
+      operationId: fireWaiter
+      summary: Fire one waiter (gracefully removes the first idle waiter, or marks the least busy for removal)
+      responses:
+        "204":
+          description: Waiter removal initiated
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  # ── Kitchen (proxy) ───────────────────────────────────────────
+
+  /internal/kitchen/instances:
+    get:
+      tags: [kitchen]
+      operationId: getKitchenInstances
+      summary: >
+        Get all kitchen-service instances and their current state,
+        proxied from Consul and each kitchen instance.
+      responses:
+        "200":
+          description: List of kitchen instances
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KitchenInstance'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags: [kitchen]
+      operationId: spawnKitchen
+      summary: Spawn a new kitchen-service Docker instance
+      responses:
+        "201":
+          description: Kitchen instance spawned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScaleResponse'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags: [kitchen]
+      operationId: despawnKitchen
+      summary: Despawn a kitchen-service Docker instance
+      responses:
+        "200":
+          description: Kitchen instance despawned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScaleResponse'
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+  # ── Metrics ───────────────────────────────────────────────────
+
+  /internal/metrics/kafka:
+    get:
+      tags: [metrics]
+      operationId: getKafkaMetrics
+      summary: Get Kafka consumer group metrics (lag per topic) for kitchen and restaurant groups
+      responses:
+        "200":
+          description: Lag per topic, keyed by topic name
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: integer
+                  format: int64
+        "500":
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+
+  responses:
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+
+    # ─── Common ────────────────────────────────────────────────────
+
+    ErrorResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: An unexpected error occurred
+
+    # ─── REST responses ────────────────────────────────────────────
+
+    SessionState:
+      type: string
+      enum:
+        - QUEUING
+        - AT_ENTRANCE
+        - WALKING_TO_SEAT
+        - SEATED
+        - WAITING_ORDER
+        - EATING
+        - LEAVING
+        - DESPAWNED
+
+    WaiterState:
+      type: string
+      enum:
+        - IDLE
+        - WALKING_TO_CLIENT
+        - TAKING_ORDER
+        - WALKING_TO_KITCHEN
+        - DELIVERING
+
+    KitchenState:
+      type: string
+      enum:
+        - COOKING
+        - IDLE
+        - STARTING
+        - UNREACHABLE
+
+    ClientEnqueuedResponse:
+      type: object
+      required: [clientId]
+      properties:
+        clientId:
+          type: string
+          format: uuid
+
+    ClientStateUpdate:
+      type: object
+      required: [state]
+      properties:
+        state:
+          $ref: '#/components/schemas/SessionState'
+
+    WaiterStateUpdate:
+      type: object
+      required: [state]
+      properties:
+        state:
+          $ref: '#/components/schemas/WaiterState'
+
+    SpawnResponse:
+      type: object
+      required: [spawned]
+      properties:
+        spawned:
+          type: integer
+
+    ScaleResponse:
+      type: object
+      required: [desiredCount]
+      properties:
+        desiredCount:
+          type: integer
+
+    RestaurantState:
+      type: object
+      required: [sessions, seats, waiters, full, availableSeats]
+      properties:
+        sessions:
+          type: array
+          description: All active sessions (queuing, in transit, and seated)
+          items:
+            $ref: '#/components/schemas/ClientSession'
+        seats:
+          type: array
+          items:
+            $ref: '#/components/schemas/Seat'
+        waiters:
+          type: array
+          items:
+            $ref: '#/components/schemas/Waiter'
+        full:
+          type: boolean
+        availableSeats:
+          type: integer
+
+    ClientSession:
+      type: object
+      required: [id, state]
+      properties:
+        id:
+          type: string
+        state:
+          $ref: '#/components/schemas/SessionState'
+        seatId:
+          type: string
+          nullable: true
+          description: Null while the client is still queuing or in transit
+        tag:
+          type: string
+          nullable: true
+          description: Optional tag for special client groups (e.g. "tfc")
+          minLength: 1
+          maxLength: 100
+
+    Seat:
+      type: object
+      required: [id, free]
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+          nullable: true
+        free:
+          type: boolean
+
+    Waiter:
+      type: object
+      required: [id, state]
+      properties:
+        id:
+          type: string
+        state:
+          $ref: '#/components/schemas/WaiterState'
+        targetSessionId:
+          type: string
+          nullable: true
+          description: Id of the targeted client session (set during WALKING_TO_CLIENT or DELIVERING)
+
+    KitchenInstance:
+      type: object
+      required: [instanceId, status]
+      properties:
+        instanceId:
+          type: string
+          description: Unique kitchen instance identifier from Consul
+        status:
+          $ref: '#/components/schemas/KitchenState'
+        waitingOrders:
+          type: integer
+          format: int32
+
+    # ─── Kafka messages ────────────────────────────────────────────
+
+    OrderMessage:
+      description: >
+        Topic: orders.in — produced by restaurant-service, consumed by kitchen-service.
+      type: object
+      required: [orderId, clientId, seatId, items, timestamp]
+      properties:
+        orderId:
+          type: string
+          format: uuid
+          description: Unique order identifier — used to correlate orders.in with orders.ready
+        clientId:
+          type: string
+          format: uuid
+        seatId:
+          type: string
+        items:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+            minLength: 1
+        timestamp:
+          type: string
+          format: date-time
+
+    OrderReadyMessage:
+      description: >
+        Topic: orders.ready — produced by kitchen-service, consumed by restaurant-service.
+      type: object
+      required: [orderId, clientId]
+      properties:
+        orderId:
+          type: string
+          format: uuid
+          description: Correlates back to the originating OrderMessage
+        clientId:
+          type: string
+          format: uuid

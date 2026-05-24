@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+
+  - job_name: 'restaurant-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['restaurant-service:8080']
+
+  # kitchen-service has 2 replicas — Docker DNS round-robins between them.
+  # For per-instance metrics, replace with explicit container hostnames.
+  - job_name: 'kitchen-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['kitchen-service:8081']

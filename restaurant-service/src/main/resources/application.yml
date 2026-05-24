@@ -1,0 +1,66 @@
+spring:
+  application:
+    name: restaurant-service
+  profiles:
+    default: dev
+  kafka:
+    bootstrap-servers: localhost:9093
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: restaurant-group
+      auto-offset-reset: latest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "fr.jr2dallas.generated.model"
+    listener:
+      ack-mode: RECORD
+  cloud:
+    consul:
+      discovery:
+        health-check-path: /actuator/health
+        instance-id: ${spring.application.name}-${random.uuid}
+        catalog-services-watch-enabled: false
+
+
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus
+  endpoint:
+    health:
+      show-details: always
+
+server:
+  port: 8080
+
+kitchen:
+  scaling:
+    compose-dir: ${KITCHEN_SCALING_COMPOSE_DIR:./}
+    initial-count: 1
+
+restaurant:
+  default-dish: dish-1
+  kafka:
+    orders-partitions: 10
+  scheduler:
+    tick-delay-ms: 200
+    stale-dish-threshold-seconds: 30
+    eating-timeout-seconds: 20
+    leaving-cleanup-timeout-seconds: 15
+    rescue-threshold-seconds: 45
