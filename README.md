@@ -24,6 +24,10 @@ The frontend also embeds a **real-time stats modal** with historical charts (cli
 
 ![Stats dashboard](docs/dashboard.png)
 
+Sprites navigate the floor using **A\* pathfinding** on a tile grid built from the restaurant layout. Press **`P`** to toggle a real-time debug overlay showing each entity's computed path.
+
+![Pathfinding debug overlay](docs/pathfinding-debug.png)
+
 ---
 
 ## Architecture
