@@ -80,8 +80,8 @@ export class WaiterSprite {
     private nav:      NavGrid;
     private easystar: EasyStar.js;
 
-    private path:    Position[] = [];
-    private pathIdx  = 0;
+    path:    Position[] = [];
+    pathIdx  = 0;
     private _onComplete?: () => void;
 
     private _pendingCallback = false;

@@ -105,8 +105,8 @@ export class ClientSprite {
     private animSprite: PIXI.AnimatedSprite | null = null;
     private walkTextures: WalkTextures | null;
 
-    private path:             Position[] = [];
-    private pathIndex         = 0;
+    path:             Position[] = [];
+    pathIndex         = 0;
     private _onPathComplete?: () => void;
     private _bobAccum         = 0;
     private _lastDx           = 0; // last X direction (used to pick animation frame)

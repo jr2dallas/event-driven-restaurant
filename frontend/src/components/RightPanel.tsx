@@ -84,8 +84,8 @@ export default function RightPanel() {
 
     useEffect(() => {
         const tick = setInterval(() => {
-            const { ordersInKitchen } = useStatsStore.getState()
-            setOrderHistory(prev => [...prev.slice(-MAX_HISTORY), ordersInKitchen])
+            const { waiting } = useStatsStore.getState()
+            setOrderHistory(prev => [...prev.slice(-MAX_HISTORY), waiting])
         }, 1000)
         return () => clearInterval(tick)
     }, [])
@@ -102,7 +102,7 @@ export default function RightPanel() {
                 <span style={label}>Kitchen Backlog</span>
                 <span style={{ fontSize: '11px', opacity: 0.6 }}>Orders in kitchen</span>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ ...bigNumber, color: '#f97316' }}>{s.ordersInKitchen}</span>
+                    <span style={{ ...bigNumber, color: '#f97316' }}>{s.waiting}</span>
                     <span style={badge('#f97316')}>Orders</span>
                 </div>
                 <ReactECharts

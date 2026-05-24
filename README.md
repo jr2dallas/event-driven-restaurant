@@ -4,6 +4,8 @@ A real-time restaurant simulation built on an **event-driven architecture**: cli
 
 ![screenshot](docs/screenshot.jpg)
 
+![demo](docs/restaurant-service.gif)
+
 [![Java 21](https://img.shields.io/badge/Java-21-orange?logo=openjdk)](https://openjdk.org/projects/jdk/21/)
 [![Spring Boot 3.4](https://img.shields.io/badge/Spring%20Boot-3.4-6db33f?logo=springboot)](https://spring.io/projects/spring-boot)
 [![Apache Kafka](https://img.shields.io/badge/Kafka-KRaft-231f20?logo=apachekafka)](https://kafka.apache.org/)
@@ -17,6 +19,10 @@ A real-time restaurant simulation built on an **event-driven architecture**: cli
 The project simulates a restaurant where every actor (client, waiter, kitchen) is modelled as an independent state machine. The frontend renders the simulation in real time using WebGL sprites (PixiJS) and drives backend state transitions through REST callbacks — the backend only advances a state when the corresponding animation confirms completion.
 
 The kitchen tier is **horizontally scalable**: the restaurant-service spawns and removes kitchen-service Docker containers at runtime by calling Docker Compose through a mounted socket, without any external orchestrator.
+
+The frontend also embeds a **real-time stats modal** with historical charts (client flow, kitchen load, waiter activity) updated every second.
+
+![Stats dashboard](docs/dashboard.png)
 
 ---
 
@@ -240,6 +246,8 @@ docker compose up --scale kitchen-service=3
 
 Prometheus scrapes both services every 15 seconds. A Grafana dashboard is auto-provisioned at startup under **Restaurant → Restaurant Overview** (http://localhost:3001, admin / admin).
 
+![Grafana dashboard](docs/grafana.jpg)
+
 **Business metrics exposed:**
 
 | Metric | Description |
@@ -253,6 +261,8 @@ Prometheus scrapes both services every 15 seconds. A Grafana dashboard is auto-p
 | `kitchen_orders_processed_total` | Total orders cooked |
 
 Standard JVM, HTTP latency (p50/p99), and Kafka consumer lag metrics are also available.
+
+See [`observability/README.md`](observability/README.md) for dashboard details and how to extend the monitoring setup.
 
 ---
 

@@ -38,6 +38,8 @@ export class SceneManager {
     private kitchenSprites: Map<string, KitchenSprite> = new Map();
     private bgLayer:     PIXI.Container | null = null;
     private spriteLayer: PIXI.Container | null = null;
+    private debugLayer:  PIXI.Graphics  | null = null;
+    private _debugPaths = false;
     private unsubClients:       () => void = () => {};
     private unsubWaiters:       () => void = () => {};
     private unsubKitchen:       () => void = () => {};
@@ -86,7 +88,8 @@ export class SceneManager {
 
         this.bgLayer = new PIXI.Container();
         this.spriteLayer = new PIXI.Container();
-        this.app.stage.addChild(this.bgLayer, this.spriteLayer);
+        this.debugLayer = new PIXI.Graphics();
+        this.app.stage.addChild(this.bgLayer, this.spriteLayer, this.debugLayer);
 
         await this.loadBackground(backgroundUrl);
         if (this._destroyed) { this.app.ticker.stop(); return; }
@@ -315,6 +318,11 @@ export class SceneManager {
         return (hashId(id) & 1) ? 1 : -1;
     }
 
+    toggleDebugPaths(): void {
+        this._debugPaths = !this._debugPaths;
+        if (!this._debugPaths) this.debugLayer?.clear();
+    }
+
     // ── Game loop ─────────────────────────────────────────────
     private tick(): void {
         if (!this.ready) return;
@@ -361,6 +369,30 @@ export class SceneManager {
         for (const sprite of this.clientSprites.values()) sprite.update(deltaMS);
         for (const sprite of this.waiterSprites.values()) sprite.update(deltaMS);
         for (const sprite of this.kitchenSprites.values()) sprite.update(deltaMS);
+
+        // ── Debug path overlay ────────────────────────────────
+        if (this._debugPaths && this.debugLayer) {
+            const g = this.debugLayer;
+            g.clear();
+            for (const sprite of this.clientSprites.values()) {
+                const { path, pathIndex, container } = sprite;
+                if (path.length === 0 || pathIndex >= path.length) continue;
+                g.moveTo(container.x, container.y);
+                for (let i = pathIndex; i < path.length; i++) g.lineTo(path[i].x, path[i].y);
+                g.stroke({ color: 0x22c55e, width: 2, alpha: 0.75 });
+                g.circle(path[path.length - 1].x, path[path.length - 1].y, 5);
+                g.fill({ color: 0x22c55e, alpha: 0.9 });
+            }
+            for (const sprite of this.waiterSprites.values()) {
+                const { path, pathIdx, container } = sprite;
+                if (path.length === 0 || pathIdx >= path.length) continue;
+                g.moveTo(container.x, container.y);
+                for (let i = pathIdx; i < path.length; i++) g.lineTo(path[i].x, path[i].y);
+                g.stroke({ color: 0x3b82f6, width: 2, alpha: 0.75 });
+                g.circle(path[path.length - 1].x, path[path.length - 1].y, 5);
+                g.fill({ color: 0x3b82f6, alpha: 0.9 });
+            }
+        }
 
         // ── Follow active speech bubble actor ─────────────────
         if (this.activeBubble) {

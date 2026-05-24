@@ -189,7 +189,7 @@ function App() {
 
                 {/* Header */}
                 <header className="col-span-full bg-white/5 rounded-xl flex items-center px-5 gap-4">
-                    <span className="font-bold text-base">🏟️ Toulouse</span>
+                    <span className="font-bold text-base">🏟️ Restaurant l'Occitan</span>
                     <span className="text-orange-500 text-[13px]"></span>
                     <div className="ml-auto flex gap-2 items-center">
                         <button onClick={() => addClients('/internal/restaurant/clients')}
@@ -212,25 +212,25 @@ function App() {
                         <button
                             onClick={() => setShowCharts(true)}
                             className="bg-[#1e3a5f] text-sky-300 border border-blue-500/50 rounded-lg py-1.5 px-3.5 text-[13px] font-bold cursor-pointer">
-                            📈 Courbes
+                            📈 Stats
                         </button>
                         <span className="opacity-20">|</span>
                         <button onClick={hireWaiter} disabled={waiterLoading}
                             className={`${btnBase} bg-blue-600`}>
-                            {waiterLoading ? '⏳' : '+ Waiter'}
+                            {waiterLoading ? '⏳ + Waiter' : '+ Waiter'}
                         </button>
                         <button onClick={fireWaiter} disabled={waiterLoading}
                             className={`${btnBase} bg-violet-600`}>
-                            {waiterLoading ? '⏳' : '− Waiter'}
+                            {waiterLoading ? '⏳ − Waiter' : '− Waiter'}
                         </button>
                         <span className="opacity-20">|</span>
                         <button onClick={hireChef} disabled={chefLoading}
                             className={`${btnBase} bg-amber-700`}>
-                            {chefLoading ? '⏳' : '+ Chef'}
+                            {chefLoading ? '⏳ + Chef' : '+ Chef'}
                         </button>
                         <button onClick={fireChef} disabled={chefLoading}
                             className={`${btnBase} bg-amber-800`}>
-                            {chefLoading ? '⏳' : '− Chef'}
+                            {chefLoading ? '⏳ − Chef' : '− Chef'}
                         </button>
                     </div>
                 </header>

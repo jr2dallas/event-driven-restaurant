@@ -27,6 +27,15 @@ export function RestaurantCanvas() {
         };
     }, []);
 
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'p' || e.key === 'P')
+                managerRef.current?.toggleDebugPaths();
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, []);
+
     return (
         <div style={{ position: 'relative', width: '100%', height: '100%' }}>
             {error && (
