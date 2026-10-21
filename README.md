@@ -47,13 +47,13 @@ flowchart TD
     end
 
     subgraph KS["kitchen-service ×N :8081"]
-        OC["Order consumer\n(concurrency=3)"]
-        Cook["Cooking pool\nScheduledExecutorService"]
+        OC["Order consumer\n(1 thread per burner)"]
+        Cook["Burners\n(cook, then ack)"]
         KReady["Kafka producer"]
     end
 
     subgraph Infra["Infrastructure"]
-        Kafka["Apache Kafka\n(KRaft, 10 partitions)"]
+        Kafka["Apache Kafka\n(KRaft, 24 partitions)"]
         Consul["HashiCorp Consul\n(discovery + KV state)"]
         Docker["Docker Engine"]
     end
@@ -80,12 +80,13 @@ flowchart TD
 ```
 Client arrives
   → Frontend calls  POST /clients
-  → Animation runs  → PUT /clients/{id}/state AT_ENTRANCE
-  → Waiter assigned → PUT /waiters/{id}/state TAKING_ORDER
-  → Order taken     → PUT /waiters/{id}/state WALKING_TO_KITCHEN
-                    → Kafka: orders.in
-  → Kitchen cooks   → Kafka: orders.ready (after delay)
-  → Waiter delivers → PUT /waiters/{id}/state IDLE
+  → At the door     → PUT /clients/{id}/state AT_ENTRANCE (waits outside until a seat is assigned)
+  → Seated          → PUT /clients/{id}/state SEATED
+  → Waiter at table → PUT /waiters/{id}/state TAKING_ORDER (every seated client of the table)
+  → Orders taken    → PUT /waiters/{id}/state WALKING_TO_KITCHEN
+  → Slips at pass   → PUT /waiters/{id}/state IDLE → Kafka: orders.in
+  → Kitchen cooks   → Kafka: orders.ready (when a burner is free + cooking time)
+  → Tray delivered  → PUT /waiters/{id}/state IDLE
   → Client eats     → auto-transition EATING → LEAVING after timeout
 ```
 
@@ -95,7 +96,9 @@ Client arrives
 
 ### Animation-driven state machine
 
-The backend state machines (clients, waiters) only advance when the **frontend animation confirms** the transition. A waiter is considered to have arrived at the table only when the sprite reaches it and calls `PUT /waiters/{id}/state TAKING_ORDER`. This decouples business logic from animation timing without polling.
+The backend state machines (clients, waiters) only advance when the **frontend animation confirms** the transition. A waiter is considered to have arrived at the table only when the sprite reaches it and calls `PUT /waiters/{id}/state TAKING_ORDER`. This decouples business logic from animation timing. The backend pushes every change to the front over server-sent events (`GET /internal/restaurant/state/stream`), so a decision reaches the animations within ~100 ms instead of waiting for the next poll.
+
+If the front stops reporting (hidden tab, closed browser), per-step timeouts complete the step on the backend so seats are never blocked.
 
 ### Kitchen scaling via Docker Compose
 
@@ -105,13 +108,34 @@ The restaurant-service controls kitchen-service instances by calling `docker com
 
 Kitchen instances publish their internal state (`STARTING` / `COOKING` / `IDLE`) to Consul KV after every order event. The restaurant-service reads this KV store to aggregate kitchen states without direct HTTP calls between services — Consul acts as a lightweight shared memory.
 
-### Kafka partitioning strategy
+### Waiter dispatch
 
-`orders.in` has 10 partitions. Orders are routed by a round-robin partition counter, and `max.poll.records=1` ensures each kitchen consumer thread processes one order at a time, matching the visual one-cook-per-order simulation.
+Waiters work in rounds: one visit takes the orders of every seated client of a table, one tray
+carries a table's dishes (they leave the pass together, or after 4 s so nothing gets cold). On each
+200 ms tick the pending jobs are rebuilt from the floor state and handed out most urgent first —
+deliveries weigh double, since serving frees a seat sooner — each to the closest free waiter,
+with a penalty for tables outside the waiter's sector. A waiter who just dropped slips at the pass
+waits there a few seconds for the dishes. Firing a waiter never drops an order in progress.
 
-### Rescue scheduler
+### Kitchen capacity and Kafka partitioning
 
-A 200 ms tick detects clients stuck in `WAITING_ORDER` with no assigned waiter (e.g., after a waiter reset mid-task) and force-creates a delivery task after a configurable threshold (default 45 s). This prevents permanent deadlocks without manual intervention.
+Each kitchen has N burners (one Kafka listener thread each) and acknowledges an order only once
+it is cooked and `orders.ready` is sent. Waiting orders stay in Kafka, so the consumer lag is the
+kitchen backlog and adding a kitchen adds throughput. `orders.in` has 24 partitions; orders are
+keyed by client id and the `CooperativeStickyAssignor` limits rebalancing when kitchens come and go.
+
+### Safety nets
+
+Orders are tracked by phase (`SLIP_IN_TRANSIT`, `IN_KITCHEN`, `READY_AT_PASS`, `SERVED`). A failed
+Kafka send is retried; an order still in the kitchen long after the kitchens have emptied their
+backlog is re-sent with the same `orderId`. A client is never served a dish that was not cooked.
+
+### Autoscaling
+
+Optional (toggles in the header, or `AUTOSCALING_WAITERS` / `AUTOSCALING_KITCHENS`): a waiter is hired
+when a job waits more than 8 s with nobody free, and fired after ~20 s of overstaffing; a kitchen is
+spawned when more than one full round of burners is queued in Kafka, and removed after a minute of
+low load.
 
 ---
 
@@ -261,7 +285,11 @@ Prometheus scrapes both services every 15 seconds. A Grafana dashboard is auto-p
 | `restaurant_waiters_active` | Active waiter workers |
 | `restaurant_orders_sent_total` | Orders successfully sent to Kafka |
 | `restaurant_orders_failed_total` | Orders that failed Kafka send |
-| `kitchen_orders_active` | Orders currently cooking (all replicas) |
+| `restaurant_client_stage_seconds{stage}` | Time per stage of a client's visit (queue, wait_order, kitchen, pass_wait, delivery, eating, seat_total…) |
+| `restaurant_orders_in_kitchen` / `restaurant_pass_dishes` | Orders in the kitchen / dishes waiting at the pass |
+| `restaurant_waiters_idle` | Waiters with nothing to do |
+| `restaurant_timeouts_total{step}`, `restaurant_orders_resent_total` | Safety nets that fired |
+| `kitchen_orders_active` / `kitchen_burners_capacity` | Dishes on the burners / burners, per kitchen (scraped through Consul) |
 | `kitchen_orders_processed_total` | Total orders cooked |
 
 Standard JVM, HTTP latency (p50/p99), and Kafka consumer lag metrics are also available.
@@ -280,9 +308,9 @@ cd kitchen-service   && ./mvnw test
 | Scope | What is tested |
 |---|---|
 | Domain unit tests | `ClientSession`, `Restaurant`, `WaiterWorker` full lifecycles |
-| Service unit tests | `WaiterScheduler` tick logic, hire/fire, rescue path |
+| Service scenario tests | `WaiterScheduler` + `RestaurantService` on a small floor: table rounds, trays, delivery priority, closest waiter, pass wait, duplicate "ready", lost-order re-send, graceful firing, timeouts |
 | Web layer (`@WebMvcTest`) | All controllers — happy path, 400/404 error cases |
-| Kitchen service | `KitchenService` cooking pool, order consumer wiring |
+| Kitchen service | `KitchenService` state tracking |
 
 ---
 

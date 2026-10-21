@@ -36,8 +36,10 @@ services:
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
-        kafka-topics --create --if-not-exists --bootstrap-server kafka:9092 --topic orders.in --partitions 10 --replication-factor 1 &&
+        # orders.in: at least one partition per burner (9 kitchens × 2 burners max), else burners sit idle
+        kafka-topics --create --if-not-exists --bootstrap-server kafka:9092 --topic orders.in --partitions 24 --replication-factor 1 &&
         kafka-topics --create --if-not-exists --bootstrap-server kafka:9092 --topic orders.ready --partitions 10 --replication-factor 1 &&
+        { kafka-topics --alter --bootstrap-server kafka:9092 --topic orders.in --partitions 24 2>/dev/null || true; } &&
         echo "Topics created successfully"
 
   consul:
@@ -82,6 +84,9 @@ services:
       # docker compose scaling — répertoire projet monté + nom du projet Compose
       KITCHEN_SCALING_COMPOSE_DIR: /app/compose
       KITCHEN_SCALING_COMPOSE_PROJECT: event-driven-restaurant
+      # Automatic hiring/firing (also switchable at runtime from the UI)
+      AUTOSCALING_WAITERS: ${AUTOSCALING_WAITERS:-false}
+      AUTOSCALING_KITCHENS: ${AUTOSCALING_KITCHENS:-false}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/app/compose:ro
@@ -109,12 +114,16 @@ services:
       SPRING_CLOUD_CONSUL_HOST: consul
       SPRING_CLOUD_CONSUL_PORT: 8500
       LOGGING_LEVEL_ROOT: ${SPRING_LOG_LEVEL:-WARN}
+      KITCHEN_BURNERS: ${KITCHEN_BURNERS:-2}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      # the JRE alpine image has busybox wget, not curl
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/actuator/health"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 40s
+    # Let a kitchen finish the dishes on its burners before stopping (orders are acked after cooking)
+    stop_grace_period: 20s
     deploy:
       replicas: 2
 

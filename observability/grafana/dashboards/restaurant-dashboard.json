@@ -283,6 +283,100 @@
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "id": 105,
+      "title": "Floor flow — where the time goes",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0, "color": { "mode": "palette-classic" } } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 50,
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "title": "Client time per stage (p50)",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.5, sum(rate(restaurant_client_stage_seconds_bucket[2m])) by (le, stage))", "legendFormat": "{{stage}}" }
+      ]
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0, "color": { "mode": "palette-classic" } } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 51,
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "title": "Seat blocked per client (seat assigned → leaving)",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.5, sum(rate(restaurant_client_stage_seconds_bucket{stage=\"seat_total\"}[2m])) by (le, stage))", "legendFormat": "p50" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.9, sum(rate(restaurant_client_stage_seconds_bucket{stage=\"seat_total\"}[2m])) by (le, stage))", "legendFormat": "p90" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.5, sum(rate(restaurant_client_stage_seconds_bucket{stage=\"eating\"}[2m])) by (le, stage))", "legendFormat": "eating p50" }
+      ]
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "color": { "mode": "palette-classic" } } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "id": 52,
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "title": "Kitchen burners in use, per kitchen",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(kitchen_orders_active) by (instance)", "legendFormat": "{{instance}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(kitchen_burners_capacity)", "legendFormat": "total burners" }
+      ]
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "color": { "mode": "palette-classic" } } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "id": 53,
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "title": "Kitchen backlog (orders.in lag) & pass",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(kafka_consumer_fetch_manager_records_lag{job=\"kitchen-service\",topic=\"orders_in\"})", "legendFormat": "orders waiting for a burner" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "restaurant_orders_in_kitchen", "legendFormat": "orders in kitchen" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "restaurant_pass_dishes", "legendFormat": "dishes waiting at the pass" }
+      ]
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "color": { "mode": "palette-classic" } } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "id": 54,
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "title": "Waiters busy / idle",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "restaurant_waiters_active", "legendFormat": "waiters" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "restaurant_waiters_idle", "legendFormat": "idle" }
+      ]
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "color": { "mode": "palette-classic" } } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "id": 55,
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "title": "Safety nets (per minute)",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(restaurant_timeouts_total[5m])) by (step) * 60", "legendFormat": "timeout {{step}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(restaurant_orders_resent_total[5m]) * 60", "legendFormat": "orders re-sent" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(restaurant_dishes_duplicate_total[5m]) * 60", "legendFormat": "duplicate ready ignored" }
+      ]
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 },
       "id": 102,
       "title": "JVM — restaurant-service",
       "type": "row"
@@ -297,7 +391,7 @@
           "color": { "mode": "palette-classic" }
         }
       },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 41 },
       "id": 20,
       "options": {
         "tooltip": { "mode": "multi", "sort": "none" },
@@ -337,7 +431,7 @@
           }
         }
       },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 41 },
       "id": 21,
       "options": {
         "reduceOptions": { "calcs": ["lastNotNull"] },
@@ -365,7 +459,7 @@
           "color": { "mode": "palette-classic" }
         }
       },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 41 },
       "id": 22,
       "options": {
         "tooltip": { "mode": "multi", "sort": "none" },
@@ -389,7 +483,7 @@
 
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 },
       "id": 103,
       "title": "HTTP — restaurant-service",
       "type": "row"
@@ -404,7 +498,7 @@
           "color": { "mode": "palette-classic" }
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 50 },
       "id": 30,
       "options": {
         "tooltip": { "mode": "multi", "sort": "none" },
@@ -430,7 +524,7 @@
           "color": { "mode": "palette-classic" }
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 50 },
       "id": 31,
       "options": {
         "tooltip": { "mode": "multi", "sort": "none" },
@@ -454,7 +548,7 @@
 
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 58 },
       "id": 104,
       "title": "Kafka — restaurant-service",
       "type": "row"
@@ -469,7 +563,7 @@
           "color": { "mode": "palette-classic" }
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 59 },
       "id": 40,
       "options": {
         "tooltip": { "mode": "multi", "sort": "none" },
@@ -495,7 +589,7 @@
           "color": { "mode": "palette-classic" }
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 59 },
       "id": 41,
       "options": {
         "tooltip": { "mode": "multi", "sort": "none" },
