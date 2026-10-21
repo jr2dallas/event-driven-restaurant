@@ -112,6 +112,25 @@ class WaiterSchedulerTest {
     }
 
     @Test
+    void freeSeatsGoToTheQueueInParallel_firstComeFirstServed() throws Exception {
+        setUp();
+        List<String> queue = new java.util.ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            queue.add(restaurant.enqueueNewClient());
+            Thread.sleep(2); // distinct arrival times
+        }
+
+        restaurant.trySeatNextClient(); // one tick: no need to reach the door first
+
+        // 4 seats on the floor: the first 4 arrivals walk in together, the others wait outside
+        for (int i = 0; i < 4; i++)
+            assertThat(session(queue.get(i)).getState()).isEqualTo(SessionState.WALKING_TO_SEAT);
+        assertThat(session(queue.get(4)).getState()).isEqualTo(SessionState.QUEUING);
+        assertThat(session(queue.get(5)).getState()).isEqualTo(SessionState.QUEUING);
+        assertThat(restaurant.getQueueSize()).isEqualTo(2);
+    }
+
+    @Test
     void theClosestWaiterOfTheSectorTakesTheJob() throws Exception {
         setUp();
         String a = seatClient();

@@ -90,25 +90,33 @@ public class RestaurantService {
         return clientId;
     }
 
+    /** The client reached the door. Informational: seats are handed out from the whole queue. */
     public void clientAtEntrance(String clientId) throws ObjectNotFoundException {
         lock.run(() -> {
             ClientSession session = requireSession(clientId);
             if (session.getState() != SessionState.QUEUING) return;
             session.markAtEntrance();
-            restaurant.enqueueClient(clientId);
         });
     }
 
+    /**
+     * Hands every free seat to the clients waiting outside, first come first served.
+     * All of them walk in at the same time; clients without a seat stay outside.
+     */
     public void trySeatNextClient() {
-        lock.run(() -> restaurant.seatNextClient(this::chooseSeat).ifPresent(a -> {
-            ClientSession session = sessions.get(a.clientId());
-            if (session == null || session.getState() != SessionState.AT_ENTRANCE) {
-                restaurant.freeSeat(a.seatId());
-                return;
+        lock.run(() -> {
+            List<ClientSession> waiting = sessions.values().stream()
+                    .filter(s -> s.getState() == SessionState.QUEUING || s.getState() == SessionState.AT_ENTRANCE)
+                    .sorted(Comparator.comparing(ClientSession::getCreatedAt))
+                    .toList();
+            for (ClientSession session : waiting) {
+                var assignment = restaurant.assignSeat(session.getId(), this::chooseSeat);
+                if (assignment.isEmpty()) break; // restaurant full
+                String seatId = assignment.get().seatId();
+                session.walkingToSeat(seatId, layout.tableOf(seatId));
+                metrics.record(Stage.QUEUE, session.getCreatedAt(), session.getSeatAssignedAt());
             }
-            session.walkingToSeat(a.seatId(), layout.tableOf(a.seatId()));
-            metrics.record(Stage.QUEUE, session.getCreatedAt(), session.getSeatAssignedAt());
-        }));
+        });
     }
 
     public void clientSeated(String clientId) throws ObjectNotFoundException {
@@ -285,7 +293,12 @@ public class RestaurantService {
 
     public ClientSession             getSession(String clientId) { return sessions.get(clientId); }
     public Collection<ClientSession> getSessions()               { return sessions.values(); }
-    public int                       getQueueSize()              { return restaurant.getWaitingQueueClientIds().size(); }
+    public int getQueueSize() {
+        int n = 0;
+        for (ClientSession s : sessions.values())
+            if (s.getState() == SessionState.QUEUING || s.getState() == SessionState.AT_ENTRANCE) n++;
+        return n;
+    }
 
     public RestaurantStateDto getState() {
         return lock.get(() -> new RestaurantStateDto(

@@ -35,6 +35,17 @@ public class Restaurant {
         return seats.stream().filter(s -> !s.isOccupied()).count();
     }
 
+    /** Gives a free seat (picked by {@code chooser}) to a client, whatever the internal queue. */
+    public synchronized Optional<SeatAssignment> assignSeat(String clientId, Function<List<Seat>, Optional<Seat>> chooser) {
+        List<Seat> free = seats.stream().filter(Seat::isFree).toList();
+        if (free.isEmpty()) return Optional.empty();
+        return chooser.apply(free).map(seat -> {
+            seat.occupy(clientId);
+            waitingQueue.remove(clientId);
+            return new SeatAssignment(clientId, seat.getId());
+        });
+    }
+
     /** Assigns the next queued client to the first free seat */
     public synchronized Optional<SeatAssignment> seatNextClient() {
         return seatNextClient(free -> free.stream().findFirst());

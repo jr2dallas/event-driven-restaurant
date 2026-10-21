@@ -42,7 +42,7 @@ to the front in the `Waiter.idlePosition` field.
 A `@Scheduled` method fires every `tick-delay-ms` (default 200 ms), under a single `FloorLock`
 shared with the HTTP callbacks and the Kafka listener, and:
 
-1. Seats the next client waiting at the door — preferably at a table where clients are about to order
+1. Hands every free seat to the clients waiting outside (first come first served) — preferably at a table where clients are about to order
 2. Completes steps the front stopped reporting (`restaurant.timeouts.*`, e.g. hidden tab)
 3. Rebuilds the pending jobs from the floor state (they can never go stale) and dispatches them:
    most urgent first (deliveries weigh `delivery-priority-weight` = 2×), each to the closest free

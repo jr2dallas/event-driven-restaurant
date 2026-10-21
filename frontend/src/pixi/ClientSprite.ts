@@ -352,7 +352,7 @@ export class ClientSprite {
                 // Walk to the doorstep (still outside), tell the backend we are here,
                 // then wait there until a seat is assigned. Nobody enters without a seat.
                 this._onDoorstep = false;
-                this.walkStraightTo({ x: DOOR_X, y: DOOR_Y }, () => {
+                this.walkStraightTo({ x: DOOR_X, y: DOOR_Y + this.laneOffset() }, () => {
                     this._onDoorstep = true;
                     this._doorstepWaitMs = 0;
                     this.onDoorReached?.(this.data.id);
@@ -361,7 +361,7 @@ export class ClientSprite {
                 break;
 
             case ENTERING:
-                this.walkStraightTo({ x: INSIDE_X, y: INSIDE_Y }, () => {
+                this.walkStraightTo({ x: INSIDE_X, y: INSIDE_Y + this.laneOffset() }, () => {
                     this.onStateChange?.(this.data.id, SessionState.WalkingToSeat);
                 });
                 break;
@@ -399,6 +399,11 @@ export class ClientSprite {
             default:
                 break;
         }
+    }
+
+    /** Several clients go through the door together: spread them over 3 lanes (stable per client). */
+    private laneOffset(): number {
+        return ((hashId(this.data.id) % 3) - 1) * 10;
     }
 
     /** Leave the doorstep as soon as the backend has assigned a seat. */

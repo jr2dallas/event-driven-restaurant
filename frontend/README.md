@@ -44,7 +44,7 @@ REST polling ──► kitchenStore        ──► ChefSprites
 
 The backend only advances a client or waiter's state when the **frontend animation confirms the transition**. For example:
 
-- A client reaches the door (still outside) → calls `PUT /clients/{id}/state AT_ENTRANCE` → waits on the doorstep until the backend assigns a seat, then walks in. Nobody enters without a seat.
+- Clients wait outside in the crowd. As soon as the backend assigns them a seat (every free seat goes to the queue, first come first served), they walk to the door — several at once, on three lanes — and in. Nobody enters without a seat.
 - A waiter is assigned a table → frontend animates the walk → on arrival, calls `PUT /waiters/{id}/state TAKING_ORDER` and takes every order of the table
 - Waiter drops the slips at the pass → calls `PUT /waiters/{id}/state IDLE` → the orders go to Kafka
 - Dishes ready → the backend assigns a tray → the waiter walks to the pass, collects the plates, walks to the table → calls `PUT /waiters/{id}/state IDLE`

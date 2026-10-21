@@ -80,7 +80,8 @@ flowchart TD
 ```
 Client arrives
   → Frontend calls  POST /clients
-  → At the door     → PUT /clients/{id}/state AT_ENTRANCE (waits outside until a seat is assigned)
+  → Seat assigned   → backend hands every free seat to the queue (FIFO); those clients walk in together
+  → At the door     → PUT /clients/{id}/state AT_ENTRANCE (clients without a seat stay outside)
   → Seated          → PUT /clients/{id}/state SEATED
   → Waiter at table → PUT /waiters/{id}/state TAKING_ORDER (every seated client of the table)
   → Orders taken    → PUT /waiters/{id}/state WALKING_TO_KITCHEN
