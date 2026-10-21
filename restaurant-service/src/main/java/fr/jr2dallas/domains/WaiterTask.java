@@ -1,67 +1,29 @@
 package fr.jr2dallas.domains;
 
+import java.time.Duration;
 import java.time.Instant;
-import java.util.Objects;
+import java.util.List;
 
-public class WaiterTask {
-    private final WaiterState type;
-    private final String clientId;
-    private final String seatId;
-    private final Instant createdAt;
+/**
+ * A job waiting for a waiter: one table, one visit.
+ * ORDER = take the orders of every seated client at the table,
+ * DELIVERY = carry a tray of ready dishes from the pass to the table.
+ *
+ * Jobs are rebuilt from the floor state on every scheduler tick, so they can never go stale.
+ */
+public record WaiterTask(
+        Type type,
+        String tableId,
+        List<String> sessionIds,
+        Instant waitingSince,
+        Point start,   // where the waiter must go first (table for ORDER, pass for DELIVERY)
+        Point target   // where the round ends (service position of the primary client)
+) {
+    public enum Type { ORDER, DELIVERY }
 
-    public WaiterTask(WaiterState type, String clientId, String seatId, Instant createdAt) {
-        this.type = type;
-        this.clientId = clientId;
-        this.seatId = seatId;
-        this.createdAt = createdAt;
-    }
-
-    public WaiterState getType() {
-        return type;
-    }
-
-    public String getClientId() {
-        return clientId;
-    }
-
-    public String getSeatId() {
-        return seatId;
-    }
-
-    public Instant getCreatedAt() {
-        return createdAt;
-    }
-
-    public static WaiterTask takeOrder(String clientId, String seatId) {
-        return new WaiterTask(WaiterState.TAKING_ORDER, clientId, seatId, Instant.now());
-    }
-
-    public static WaiterTask deliverDish(String clientId, String seatId) {
-        return new WaiterTask(WaiterState.DELIVERING, clientId, seatId, Instant.now());
-    }
-
-    @Override
-    public String toString() {
-        return "WaiterTask{" +
-                "type=" + type +
-                ", clientId='" + clientId + '\'' +
-                ", seatId='" + seatId + '\'' +
-                ", createdAt=" + createdAt +
-                '}';
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (!(o instanceof WaiterTask that)) return false;
-        return type == that.type &&
-                Objects.equals(clientId, that.clientId) &&
-                Objects.equals(seatId, that.seatId) &&
-                Objects.equals(createdAt, that.createdAt);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(type, clientId, seatId, createdAt);
+    /** Higher = more urgent. Deliveries weigh more: serving frees a seat sooner. */
+    public double urgency(Instant now, double deliveryWeight) {
+        double waited = Math.max(0, Duration.between(waitingSince, now).toMillis()) / 1000.0;
+        return type == Type.DELIVERY ? (waited + 1) * deliveryWeight : waited + 1;
     }
 }

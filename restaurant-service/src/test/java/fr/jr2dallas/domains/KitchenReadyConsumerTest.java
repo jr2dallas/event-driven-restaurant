@@ -22,24 +22,26 @@ class KitchenReadyConsumerTest {
     @Test
     void handleDishReady_callsOnDishReadyWithCorrectClientId() {
         UUID clientId = UUID.randomUUID();
+        UUID orderId  = UUID.randomUUID();
         OrderReadyMessage message = new OrderReadyMessage()
-                .orderId(UUID.randomUUID())
+                .orderId(orderId)
                 .clientId(clientId);
 
         consumer.handleDishReady(message);
 
-        verify(waiterScheduler).onDishReady(clientId.toString());
+        verify(waiterScheduler).onDishReady(clientId.toString(), orderId);
     }
 
     @Test
     void handleDishReady_propagatesClientIdExactly() {
         UUID clientId = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
+        UUID orderId  = UUID.fromString("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
         OrderReadyMessage message = new OrderReadyMessage()
-                .orderId(UUID.randomUUID())
+                .orderId(orderId)
                 .clientId(clientId);
 
         consumer.handleDishReady(message);
 
-        verify(waiterScheduler).onDishReady("550e8400-e29b-41d4-a716-446655440000");
+        verify(waiterScheduler).onDishReady("550e8400-e29b-41d4-a716-446655440000", orderId);
     }
 }

@@ -16,6 +16,6 @@ public class KitchenReadyConsumer {
 
     @KafkaListener(topics = "orders.ready", groupId = "restaurant-group")
     public void handleDishReady(OrderReadyMessage message) {
-        waiterScheduler.onDishReady(message.getClientId().toString());
+        waiterScheduler.onDishReady(message.getClientId().toString(), message.getOrderId());
     }
 }

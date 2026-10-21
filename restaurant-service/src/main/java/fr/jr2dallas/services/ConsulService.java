@@ -63,7 +63,7 @@ public class ConsulService {
                     consulUrl("/v1/kv/kitchen-state/" + instanceId),
                     ConsulKvEntry[].class);
             decodeKitchenKv(kvEntries).ifPresentOrElse(
-                    kv -> dto.status(kv.getStatus()).waitingOrders(kv.getWaitingOrders()),
+                    kv -> dto.status(kv.getStatus()).waitingOrders(kv.getWaitingOrders()).capacity(kv.getCapacity()),
                     () -> dto.status(KitchenState.STARTING)
             );
         } catch (HttpClientErrorException.NotFound e) {

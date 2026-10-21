@@ -3,11 +3,18 @@ spring:
     name: restaurant-service
   profiles:
     default: dev
+  task:
+    scheduling:
+      pool:
+        size: 4   # floor tick, SSE push and autoscaling (docker compose) must not wait on each other
   kafka:
     bootstrap-servers: localhost:9093
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        # Sends happen under the floor lock: never block it for long when Kafka is down
+        max.block.ms: 2000
     consumer:
       group-id: restaurant-group
       auto-offset-reset: latest
@@ -56,11 +63,35 @@ kitchen:
 
 restaurant:
   default-dish: dish-1
-  kafka:
-    orders-partitions: 10
   scheduler:
     tick-delay-ms: 200
-    stale-dish-threshold-seconds: 30
     eating-timeout-seconds: 20
     leaving-cleanup-timeout-seconds: 15
-    rescue-threshold-seconds: 45
+    # Order still in the kitchen after this long while kitchens have no backlog → re-sent
+    rescue-threshold-seconds: 60
+  dispatch:
+    tray-capacity: 4               # plates per delivery round (a 4-seat table in one trip)
+    delivery-priority-weight: 2.0  # serving beats taking orders at equal wait
+    group-hold-seconds: 4          # wait up to 4 s for the rest of a table's dishes
+    pass-wait-seconds: 6           # after dropping a slip, wait at the pass for the dishes
+    sector-penalty-px: 150
+  timeouts:                        # safety nets when the front stops reporting (hidden tab…)
+    walk-seconds: 45
+    taking-order-seconds: 20
+    walk-to-seat-seconds: 60
+  floor:
+    pass: { x: 920, y: 452 }       # same as KITCHEN_POS in the front
+    waiter-posts:                  # idle waiters wait here; each post is a sector
+      - { x: 500, y: 525 }
+      - { x: 680, y: 525 }
+      - { x: 500, y: 685 }
+      - { x: 680, y: 685 }
+      - { x: 860, y: 290 }
+      - { x: 860, y: 605 }
+  autoscaling:
+    waiters: ${AUTOSCALING_WAITERS:false}
+    kitchens: ${AUTOSCALING_KITCHENS:false}
+    min-waiters: 2
+    max-waiters: 30
+    min-kitchens: 1
+    max-kitchens: 9                # one per kitchen station on the floor plan

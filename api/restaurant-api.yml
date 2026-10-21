@@ -6,7 +6,7 @@ info:
     The kitchen-service is not directly accessible from the front —
     all kitchen state queries are proxied through restaurant-service.
     Kafka topics (orders.in, orders.ready)
-  version: 0.4.0
+  version: 0.5.0
 
 tags:
   - name: restaurant
@@ -17,6 +17,10 @@ tags:
     description: Kitchen state proxied from kitchen-service instances
   - name: metrics
     description: Observability metrics
+  - name: stream
+    description: Server-sent events (push instead of polling)
+  - name: autoscaling
+    description: Automatic hiring / firing of waiters and kitchens
 
 paths:
 
@@ -36,6 +40,22 @@ paths:
                 $ref: '#/components/schemas/RestaurantState'
         "500":
           $ref: '#/components/responses/InternalServerError'
+
+  /internal/restaurant/state/stream:
+    get:
+      tags: [stream]
+      operationId: streamRestaurantState
+      summary: >
+        Server-sent events stream. Each `state` event carries a full RestaurantState JSON
+        payload, pushed as soon as the floor changes (at most every 100 ms).
+        Comment lines are sent as heartbeats.
+      responses:
+        "200":
+          description: Event stream of RestaurantState payloads
+          content:
+            text/event-stream:
+              schema:
+                type: string
 
   # ── Clients ──────────────────────────────────────────────────
 
@@ -250,6 +270,38 @@ paths:
         "500":
           $ref: '#/components/responses/InternalServerError'
 
+  # ── Autoscaling ───────────────────────────────────────────────
+
+  /internal/autoscaling:
+    get:
+      tags: [autoscaling]
+      operationId: getAutoscaling
+      summary: Get the current autoscaling settings
+      responses:
+        "200":
+          description: Current settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoscalingSettings'
+    put:
+      tags: [autoscaling]
+      operationId: updateAutoscaling
+      summary: Enable or disable automatic scaling of waiters and kitchens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutoscalingSettings'
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoscalingSettings'
+
   # ── Metrics ───────────────────────────────────────────────────
 
   /internal/metrics/kafka:
@@ -322,6 +374,37 @@ components:
         - IDLE
         - STARTING
         - UNREACHABLE
+
+    OrderPhase:
+      type: string
+      description: >
+        Progress of the client's order. NONE before ordering, SLIP_IN_TRANSIT while the waiter
+        carries the order slip, IN_KITCHEN once sent to Kafka, READY_AT_PASS when the dish waits
+        for pickup, SERVED once delivered.
+      enum:
+        - NONE
+        - SLIP_IN_TRANSIT
+        - IN_KITCHEN
+        - READY_AT_PASS
+        - SERVED
+
+    Position:
+      type: object
+      required: [x, y]
+      properties:
+        x:
+          type: number
+        y:
+          type: number
+
+    AutoscalingSettings:
+      type: object
+      required: [waiters, kitchens]
+      properties:
+        waiters:
+          type: boolean
+        kitchens:
+          type: boolean
 
     ClientEnqueuedResponse:
       type: object
@@ -399,6 +482,8 @@ components:
           description: Optional tag for special client groups (e.g. "tfc")
           minLength: 1
           maxLength: 100
+        orderPhase:
+          $ref: '#/components/schemas/OrderPhase'
 
     Seat:
       type: object
@@ -423,7 +508,22 @@ components:
         targetSessionId:
           type: string
           nullable: true
-          description: Id of the targeted client session (set during WALKING_TO_CLIENT or DELIVERING)
+          description: >
+            Primary client of the current round (the waiter walks to this client's seat).
+            Set during WALKING_TO_CLIENT, TAKING_ORDER, WALKING_TO_KITCHEN and DELIVERING.
+        targetSessionIds:
+          type: array
+          description: All clients of the current round (same table — one visit, one tray)
+          items:
+            type: string
+        targetTableId:
+          type: string
+          nullable: true
+        dishes:
+          type: integer
+          description: Number of plates carried while DELIVERING
+        idlePosition:
+          $ref: '#/components/schemas/Position'
 
     KitchenInstance:
       type: object
@@ -437,6 +537,11 @@ components:
         waitingOrders:
           type: integer
           format: int32
+          description: Dishes currently on the burners
+        capacity:
+          type: integer
+          format: int32
+          description: Number of burners (dishes cooked in parallel)
 
     # ─── Kafka messages ────────────────────────────────────────────
 
