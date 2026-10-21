@@ -1,7 +1,7 @@
 // src/pixi/SceneManager.ts
 import * as PIXI from 'pixi.js';
 import EasyStar from 'easystarjs';
-import { AT_DOOR, ENTERING, useClientSpritesStore, SessionState } from '../store/clientSpritesStore';
+import { ENTERING, useClientSpritesStore, SessionState } from '../store/clientSpritesStore';
 import { notifyClientState } from '../api/animationCallbacks';
 import { hashId } from '../utils/hashId';
 import { useWaiterSpritesStore } from '../store/waiterSpritesStore';
@@ -168,6 +168,8 @@ export class SceneManager {
                     data, this.nav, this.easystar,
                     (sid, next) => this.handleClientStateChange(sid, next),
                     walkTex,
+                    // On the doorstep (outside): ask the backend for a seat
+                    (sid) => void notifyClientState(sid, SessionState.AtEntrance),
                 );
                 this.clientSprites.set(id, sprite);
                 this.spriteLayer.addChild(sprite.container);
@@ -263,7 +265,7 @@ export class SceneManager {
         const store = useClientSpritesStore.getState();
         switch (next) {
             case ENTERING:
-                void notifyClientState(sessionId, SessionState.AtEntrance);
+                // AT_ENTRANCE was already reported from the doorstep; the client has a seat now
                 store.transition(sessionId, ENTERING);
                 break;
             case SessionState.Seated:
@@ -277,40 +279,6 @@ export class SceneManager {
             default:
                 store.transition(sessionId, next);
         }
-    }
-
-    // ── Door admission ────────────────────────────────────────
-
-    /** No AT_DOOR client currently exists → door is free for the next candidate. */
-    private doorIsFree(): boolean {
-        for (const sprite of this.clientSprites.values()) {
-            if (sprite.data.state === AT_DOOR) return false;
-        }
-        return true;
-    }
-
-    /**
-     * Pick the next client to admit through the door:
-     * oldest arrival time first (FIFO queue), then proximity as tiebreaker.
-     * Deliberately NOT based on who physically pressed to the front — the crowd
-     * is visual jostling only; admission order is fair.
-     */
-    private pickDoorCandidate(): string | null {
-        let best: ClientSpriteData | null = null;
-        for (const sprite of this.clientSprites.values()) {
-            if (sprite.data.state !== SessionState.Queuing) continue;
-            if (!best) { best = sprite.data; continue; }
-            if (sprite.data.arrivedAt < best.arrivedAt) best = sprite.data;
-            else if (sprite.data.arrivedAt === best.arrivedAt) {
-                // Tiebreak by proximity to door
-                const s  = this.clientSprites.get(sprite.data.id)!;
-                const b  = this.clientSprites.get(best.id)!;
-                const ds = (s.container.x - CROWD_WALL_X) ** 2 + (s.container.y - CROWD_ANCHOR_Y) ** 2;
-                const db = (b.container.x - CROWD_WALL_X) ** 2 + (b.container.y - CROWD_ANCHOR_Y) ** 2;
-                if (ds < db) best = sprite.data;
-            }
-        }
-        return best?.id ?? null;
     }
 
     /** Stable side bias from ID — breaks crowd symmetry */
@@ -358,12 +326,8 @@ export class SceneManager {
             }
         }
 
-        // ── Door admission (FIFO, one at a time) ──────────────
-        if (this.doorIsFree()) {
-            const candidateId = this.pickDoorCandidate();
-            if (candidateId)
-                useClientSpritesStore.getState().transition(candidateId, AT_DOOR);
-        }
+        // Door admission is driven by the backend: a queued client walks to the door as soon as
+        // a seat is assigned to them (restaurantSyncStore), several at a time when seats free up.
 
         // ── Movement for all sprites ──────────────────────────
         for (const sprite of this.clientSprites.values()) sprite.update(deltaMS);

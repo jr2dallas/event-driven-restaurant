@@ -27,37 +27,63 @@ Transitions are triggered by frontend callbacks (`PUT /clients/{id}/state`). The
 IDLE → WALKING_TO_CLIENT → TAKING_ORDER → WALKING_TO_KITCHEN → DELIVERING → IDLE
 ```
 
-The scheduler assigns tasks to idle waiters on every tick. The frontend drives each transition by calling `PUT /waiters/{id}/state` when the sprite reaches its destination.
+A waiter works in **rounds**: one visit to one table. An order round takes the order of every
+seated client at the table (clients who sit down while the waiter is on the way join the round);
+a delivery round carries a tray with the table's ready dishes. The frontend drives each transition
+by calling `PUT /waiters/{id}/state` when the sprite reaches its destination.
 
-Task priority inside `WaiterWorker.pickNextTask()`:
-1. Urgent deliveries (dish has been waiting longer than `stale-dish-threshold-seconds`)
-2. Order taking (clients waiting at table)
-3. Normal deliveries
+Each waiter has a home post (one per sector of the room, `restaurant.floor.waiter-posts`) where it
+waits when idle. After dropping order slips at the pass it waits there for
+`pass-wait-seconds`, since that is where the next dishes come out. The idle position is sent
+to the front in the `Waiter.idlePosition` field.
 
 ## Scheduler
 
-A `@Scheduled` method fires every `tick-delay-ms` (default 200 ms) and:
+A `@Scheduled` method fires every `tick-delay-ms` (default 200 ms), under a single `FloorLock`
+shared with the HTTP callbacks and the Kafka listener, and:
 
-1. Moves clients from `QUEUING` to `AT_ENTRANCE` when a seat is free
-2. Assigns idle waiters to pending order and delivery tasks
-3. Detects clients stuck in `WAITING_ORDER` with no assigned waiter for longer than `rescue-threshold-seconds` (default 45 s) and force-creates a delivery task to unblock them
+1. Hands every free seat to the clients waiting outside (first come first served) — preferably at a table where clients are about to order
+2. Completes steps the front stopped reporting (`restaurant.timeouts.*`, e.g. hidden tab)
+3. Rebuilds the pending jobs from the floor state (they can never go stale) and dispatches them:
+   most urgent first (deliveries weigh `delivery-priority-weight` = 2×), each to the closest free
+   waiter, plus `sector-penalty-px` for tables outside the waiter's sector
+4. Moves EATING clients to LEAVING after `eating-timeout-seconds` and retries failed Kafka sends
 
-The rescue path prevents permanent deadlocks after a waiter reset or a missed callback without requiring any manual intervention.
+Orders carry a phase (`SLIP_IN_TRANSIT` → `IN_KITCHEN` → `READY_AT_PASS` → `SERVED`). A separate
+10 s loop re-sends (same `orderId`) orders still `IN_KITCHEN` after `rescue-threshold-seconds`, but
+only when the kitchens have no backlog — a slow kitchen is not a lost order. A client is never
+served a dish that was not cooked.
+
+`FloorSnapshotService` builds a consistent state, which `StateStreamController` pushes over
+server-sent events (`GET /internal/restaurant/state/stream`) whenever it changes.
 
 ## Kafka
 
 | Topic | Direction | Key | Value |
 |---|---|---|---|
-| `orders.in` | Produced | round-robin partition counter | `OrderMessage` |
-| `orders.ready` | Consumed | — | `OrderReadyMessage` |
+| `orders.in` | Produced | client id | `OrderMessage` |
+| `orders.ready` | Consumed | — | `OrderReadyMessage` (duplicates ignored by `orderId`) |
 
-The topic has 10 partitions. Orders are routed by a monotonic partition counter so load spreads evenly across kitchen instances.
+Orders are keyed by client id and spread over the 24 partitions of `orders.in` by Kafka (no partition
+count hard-coded in the service). Sends never block the floor for more than `max.block.ms` = 2 s.
 
 ## Kitchen scaling
 
-`KitchenScalingService` invokes `docker compose up --scale kitchen-service=N` through the Docker socket mounted at `/var/run/docker.sock`. No external orchestrator is needed. The desired count is rolled back automatically if the command fails or times out.
+`KitchenScalingService` invokes `docker compose up --scale kitchen-service=N --no-deps kitchen-service`
+through the Docker socket mounted at `/var/run/docker.sock`. No external orchestrator is needed. The
+current count is read from Docker on first use, so it survives a restaurant-service restart.
 
-Kitchen instance states are read from Consul KV (`/v1/kv/kitchen-state/{instanceId}`), where each kitchen instance publishes its own state after every order event.
+Kitchen instance states (status, dishes on the burners, capacity) are read from Consul KV
+(`/v1/kv/kitchen-state/{instanceId}`), where each kitchen instance publishes its own state.
+
+## Autoscaling
+
+`AutoscalingService` (off by default; `GET/PUT /internal/autoscaling`, or `AUTOSCALING_WAITERS` /
+`AUTOSCALING_KITCHENS`):
+
+- waiters: hire when a job has waited ≥ 8 s with nobody free; fire after ~20 s of overstaffing
+- kitchens: spawn when the `orders.in` lag exceeds the total number of burners twice in a row;
+  remove one after a minute of low load; 45 s cooldown (a kitchen needs ~40 s to start)
 
 ## Configuration
 
@@ -66,10 +92,19 @@ Key properties from `application.yml` (overridable via environment variables):
 | Property | Default | Description |
 |---|---|---|
 | `restaurant.scheduler.tick-delay-ms` | `200` | Scheduler tick interval |
-| `restaurant.scheduler.stale-dish-threshold-seconds` | `30` | Dish urgency threshold |
 | `restaurant.scheduler.eating-timeout-seconds` | `20` | Auto-transition EATING → LEAVING |
-| `restaurant.scheduler.rescue-threshold-seconds` | `45` | Stuck waiter detection |
-| `kitchen.scaling.initial-count` | `1` | Kitchen instances at startup |
+| `restaurant.scheduler.rescue-threshold-seconds` | `60` | Order considered lost (only when kitchens have no backlog) |
+| `restaurant.dispatch.tray-capacity` | `4` | Plates per delivery round |
+| `restaurant.dispatch.delivery-priority-weight` | `2.0` | Serving vs taking orders at equal wait |
+| `restaurant.dispatch.group-hold-seconds` | `4` | Max wait for the rest of a table's dishes |
+| `restaurant.dispatch.pass-wait-seconds` | `6` | Wait at the pass after dropping slips |
+| `restaurant.dispatch.sector-penalty-px` | `150` | Penalty for a table outside the waiter's sector |
+| `restaurant.timeouts.walk-seconds` | `45` | Walk not reported by the front → completed |
+| `restaurant.timeouts.taking-order-seconds` | `20` | Order taking not reported → completed |
+| `restaurant.timeouts.walk-to-seat-seconds` | `60` | Client never reported SEATED → seated |
+| `restaurant.floor.pass` / `waiter-posts` | see yml | Kitchen pass and idle posts (sectors) |
+| `restaurant.autoscaling.*` | off | Autoscaling switches and bounds |
+| `kitchen.scaling.initial-count` | `1` | Fallback when Docker cannot be queried |
 
 ## Tests
 

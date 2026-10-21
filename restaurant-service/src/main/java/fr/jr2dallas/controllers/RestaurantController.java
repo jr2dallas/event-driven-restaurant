@@ -5,9 +5,8 @@ import fr.jr2dallas.generated.model.ClientEnqueuedResponse;
 import fr.jr2dallas.generated.model.ClientStateUpdate;
 import fr.jr2dallas.generated.model.RestaurantState;
 import fr.jr2dallas.generated.model.SpawnResponse;
-import fr.jr2dallas.mappers.RestaurantMapper;
+import fr.jr2dallas.services.FloorSnapshotService;
 import fr.jr2dallas.services.RestaurantService;
-import fr.jr2dallas.services.WaiterScheduler;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
@@ -17,25 +16,17 @@ import java.util.UUID;
 @RestController
 public class RestaurantController implements RestaurantApi {
 
-    private final RestaurantService restaurantService;
-    private final WaiterScheduler waiterScheduler;
-    private final RestaurantMapper restaurantMapper;
+    private final RestaurantService    restaurantService;
+    private final FloorSnapshotService snapshots;
 
-    public RestaurantController(RestaurantService restaurantService,
-                                WaiterScheduler waiterScheduler,
-                                RestaurantMapper restaurantMapper) {
+    public RestaurantController(RestaurantService restaurantService, FloorSnapshotService snapshots) {
         this.restaurantService = restaurantService;
-        this.waiterScheduler = waiterScheduler;
-        this.restaurantMapper = restaurantMapper;
+        this.snapshots = snapshots;
     }
 
     @Override
     public ResponseEntity<RestaurantState> getRestaurantState() {
-        RestaurantState state = restaurantMapper.fromRestaurantStateToRestaurantStateDto(
-                restaurantService.getState(),
-                waiterScheduler.getWaiters()
-        );
-        return ResponseEntity.ok(state);
+        return ResponseEntity.ok(snapshots.snapshot());
     }
 
     @Override

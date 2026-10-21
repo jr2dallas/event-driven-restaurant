@@ -1,14 +1,12 @@
 package fr.jr2dallas.controllers;
 
-import fr.jr2dallas.domains.RestaurantStateDto;
 import fr.jr2dallas.domains.exceptions.ObjectNotFoundException;
-import fr.jr2dallas.mappers.RestaurantMapper;
+import fr.jr2dallas.generated.model.RestaurantState;
+import fr.jr2dallas.services.FloorSnapshotService;
 import fr.jr2dallas.services.RestaurantService;
-import fr.jr2dallas.services.WaiterScheduler;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -21,13 +19,12 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(RestaurantController.class)
-@Import(RestaurantMapper.class)
 class RestaurantControllerTest {
 
     @Autowired MockMvc mvc;
 
     @MockitoBean RestaurantService restaurantService;
-    @MockitoBean WaiterScheduler   waiterScheduler;
+    @MockitoBean FloorSnapshotService snapshots;
 
     @Test
     void enqueueClient_returns201WithClientId() throws Exception {
@@ -41,9 +38,9 @@ class RestaurantControllerTest {
 
     @Test
     void getRestaurantState_returns200WithPayload() throws Exception {
-        when(restaurantService.getState())
-                .thenReturn(new RestaurantStateDto(List.of(), List.of(), false, 5));
-        when(waiterScheduler.getWaiters()).thenReturn(List.of());
+        when(snapshots.snapshot()).thenReturn(new RestaurantState()
+                .sessions(List.of()).seats(List.of()).waiters(List.of())
+                .full(false).availableSeats(5));
 
         mvc.perform(get("/internal/restaurant/state"))
                 .andExpect(status().isOk())

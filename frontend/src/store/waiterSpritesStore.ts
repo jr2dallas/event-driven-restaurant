@@ -20,13 +20,28 @@ export interface WaiterSpriteData {
     state: WaiterState;
     position: Position;
     targetSessionId: string | null;
-    targetPosition: Position | null; // position pixel de la cible
+    targetPosition: Position | null; // pixel position of the primary client
+    /** Every client of the current round (one table, one visit) */
+    targetSessionIds: string[];
+    /** Plates carried while delivering */
+    dishes: number;
+    /** Where the backend wants the waiter to wait while idle (home post, or the pass) */
+    idlePosition: Position | null;
+}
+
+export interface WaiterUpdate {
+    state: WaiterState;
+    targetSessionId: string | null;
+    targetPos: Position | null;
+    targetSessionIds: string[];
+    dishes: number;
+    idlePosition: Position | null;
 }
 
 // ── Store ──────────────────────────────────────────────────────
 interface WaiterSpritesState {
     waiters: Map<string, WaiterSpriteData>;
-    upsert:      (id: string, state: WaiterState, targetSessionId: string | null, targetPos: Position | null) => void;
+    upsert:      (id: string, update: WaiterUpdate) => void;
     transition:  (id: string, next: WaiterState) => void;
     setPosition: (id: string, pos: Position) => void;
     getById:     (id: string) => WaiterSpriteData | undefined;
@@ -36,24 +51,43 @@ interface WaiterSpritesState {
 // Waiter spawn position (kitchen / counter area)
 const WAITER_SPAWN_POS: Position = { x: 1900, y: 760 };
 
+const samePos = (a: Position | null, b: Position | null) =>
+    a === b || (!!a && !!b && a.x === b.x && a.y === b.y);
+
+const sameIds = (a: string[], b: string[]) =>
+    a.length === b.length && a.every((id, i) => id === b[i]);
+
 export const useWaiterSpritesStore = create<WaiterSpritesState>((set, get) => ({
     waiters: new Map(),
 
-    upsert(id, state, targetSessionId, targetPos) {
+    upsert(id, update) {
+        const existing = get().waiters.get(id);
+        // If position resolution fails (session absent from current payload)
+        // but targetSessionId is unchanged, keep the last known position
+        // so we don't lose track of a waiter already en route.
+        const sameSession = existing?.targetSessionId === update.targetSessionId;
+        const resolvedPos = update.targetPos ?? (sameSession ? (existing?.targetPosition ?? null) : null);
+
+        // Pushed states arrive often: skip no-op updates so sprites are not re-synced for nothing
+        if (existing
+            && existing.state === update.state
+            && sameSession
+            && samePos(existing.targetPosition, resolvedPos)
+            && samePos(existing.idlePosition, update.idlePosition)
+            && existing.dishes === update.dishes
+            && sameIds(existing.targetSessionIds, update.targetSessionIds)) return;
+
         set(s => {
             const waiters = new Map(s.waiters);
-            const existing = waiters.get(id);
-            // If position resolution fails (session absent from current poll)
-            // but targetSessionId is unchanged, keep the last known position
-            // so we don't lose track of a waiter already en route.
-            const sameSession = existing?.targetSessionId === targetSessionId;
-            const resolvedPos = targetPos ?? (sameSession ? (existing?.targetPosition ?? null) : null);
             waiters.set(id, {
                 id,
-                state,
-                position: existing?.position ?? WAITER_SPAWN_POS,
-                targetSessionId,
-                targetPosition: resolvedPos,
+                state:            update.state,
+                position:         existing?.position ?? WAITER_SPAWN_POS,
+                targetSessionId:  update.targetSessionId,
+                targetPosition:   resolvedPos,
+                targetSessionIds: update.targetSessionIds,
+                dishes:           update.dishes,
+                idlePosition:     update.idlePosition,
             });
             return { waiters };
         });
@@ -66,7 +100,7 @@ export const useWaiterSpritesStore = create<WaiterSpritesState>((set, get) => ({
             if (!waiter) return s;
             const allowed = VALID_TRANSITIONS[waiter.state];
             if (!allowed.includes(next)) {
-                console.warn(`[WaiterFSM] Transition invalide: ${waiter.state} → ${next} (${id})`);
+                console.warn(`[WaiterFSM] Invalid transition: ${waiter.state} → ${next} (${id})`);
                 return s;
             }
             waiters.set(id, { ...waiter, state: next });

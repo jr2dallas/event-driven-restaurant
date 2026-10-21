@@ -130,7 +130,7 @@ export default function RightPanel() {
             <div style={card}>
                 <span style={label}>Ready to Deliver</span>
                 <span style={{ ...bigNumber, color: '#a78bfa' }}>{s.ordersReady}</span>
-                <span style={{ fontSize: '12px', opacity: 0.5 }}>dishes on the way to tables</span>
+                <span style={{ fontSize: '12px', opacity: 0.5 }}>dishes waiting at the pass</span>
             </div>
 
             {/* Table occupancy */}

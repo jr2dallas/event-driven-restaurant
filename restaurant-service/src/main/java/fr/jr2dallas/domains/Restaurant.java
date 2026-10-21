@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 
 public class Restaurant {
     private final String     id;
@@ -34,13 +35,29 @@ public class Restaurant {
         return seats.stream().filter(s -> !s.isOccupied()).count();
     }
 
-    /** Assigne le prochain client en file au premier siège libre */
-    public synchronized Optional<SeatAssignment> seatNextClient() {
-        if (waitingQueue.isEmpty()) return Optional.empty();
+    /** Gives a free seat (picked by {@code chooser}) to a client, whatever the internal queue. */
+    public synchronized Optional<SeatAssignment> assignSeat(String clientId, Function<List<Seat>, Optional<Seat>> chooser) {
+        List<Seat> free = seats.stream().filter(Seat::isFree).toList();
+        if (free.isEmpty()) return Optional.empty();
+        return chooser.apply(free).map(seat -> {
+            seat.occupy(clientId);
+            waitingQueue.remove(clientId);
+            return new SeatAssignment(clientId, seat.getId());
+        });
+    }
 
-        return seats.stream()
-                .filter(s -> !s.isOccupied())
-                .findFirst()
+    /** Assigns the next queued client to the first free seat */
+    public synchronized Optional<SeatAssignment> seatNextClient() {
+        return seatNextClient(free -> free.stream().findFirst());
+    }
+
+    /** Assigns the next queued client to the seat picked by {@code chooser} among the free seats */
+    public synchronized Optional<SeatAssignment> seatNextClient(Function<List<Seat>, Optional<Seat>> chooser) {
+        if (waitingQueue.isEmpty()) return Optional.empty();
+        List<Seat> free = seats.stream().filter(Seat::isFree).toList();
+        if (free.isEmpty()) return Optional.empty();
+
+        return chooser.apply(free)
                 .map(seat -> {
                     String clientId = waitingQueue.pollFirst();
                     seat.occupy(clientId);

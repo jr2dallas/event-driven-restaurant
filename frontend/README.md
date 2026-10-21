@@ -17,10 +17,10 @@ React 19 + PixiJS 8 SPA that renders the restaurant simulation in real time and 
 
 ## Architecture
 
-The frontend is split between **Pixi rendering** (canvas, sprites, animations) and **Zustand stores** (shared state, polling, derived metrics). React components read from stores but never talk to PixiJS directly.
+The frontend is split between **Pixi rendering** (canvas, sprites, animations) and **Zustand stores** (shared state, server push, derived metrics). React components read from stores but never talk to PixiJS directly.
 
 ```
-REST polling ──► restaurantSyncStore ──► clientSpritesStore
+SSE push ─────► restaurantSyncStore ──► clientSpritesStore
                                     └──► waiterSpritesStore ──► SceneManager (PixiJS)
 REST polling ──► kitchenStore        ──► ChefSprites
                       │
@@ -32,10 +32,10 @@ REST polling ──► kitchenStore        ──► ChefSprites
 
 | Store | Role |
 |---|---|
-| `restaurantSyncStore` | Polls `/internal/restaurant/state` every 2 s — source of truth for sessions and waiters |
-| `kitchenStore` | Polls `/internal/kitchen/instances` every 3 s (fast-polls on hire/fire) |
+| `restaurantSyncStore` | Receives the floor state pushed on `/internal/restaurant/state/stream` (SSE) as soon as it changes; falls back to polling `/internal/restaurant/state` every 2 s while the stream is down |
+| `kitchenStore` | Polls `/internal/kitchen/instances` every 3 s (fast-polls on hire/fire); each chef keeps its station for life |
 | `clientSpritesStore` | Sprite state per client (position, animation state, target seat) |
-| `waiterSpritesStore` | Sprite state per waiter (position, animation state, target) |
+| `waiterSpritesStore` | Sprite state per waiter (position, animation state, round: clients of the table, plates carried, idle spot chosen by the backend) |
 | `statsStore` | Derives all dashboard metrics from restaurant + kitchen state |
 | `chartsHistoryStore` | Maintains 60-second rolling time series for the left-panel charts |
 | `dishReactionStore` | Triggers emoji reactions when a dish is delivered to a table |
@@ -44,11 +44,12 @@ REST polling ──► kitchenStore        ──► ChefSprites
 
 The backend only advances a client or waiter's state when the **frontend animation confirms the transition**. For example:
 
-- A waiter is assigned a client → frontend animates the walk → on arrival, calls `PUT /waiters/{id}/state TAKING_ORDER`
-- The order is sent to Kafka → kitchen cooks → Kafka reply triggers `PUT /waiters/{id}/state DELIVERING`
-- Waiter walks to table and delivers → calls `PUT /waiters/{id}/state IDLE`
+- Clients wait outside in the crowd. As soon as the backend assigns them a seat (every free seat goes to the queue, first come first served), they walk to the door — several at once, on three lanes — and in. Nobody enters without a seat.
+- A waiter is assigned a table → frontend animates the walk → on arrival, calls `PUT /waiters/{id}/state TAKING_ORDER` and takes every order of the table
+- Waiter drops the slips at the pass → calls `PUT /waiters/{id}/state IDLE` → the orders go to Kafka
+- Dishes ready → the backend assigns a tray → the waiter walks to the pass, collects the plates, walks to the table → calls `PUT /waiters/{id}/state IDLE`
 
-This means animation timing and business logic are naturally in sync without any polling or timeouts on the backend side.
+Animation timing and business logic stay in sync. If the tab is hidden (the browser pauses animations), backend timeouts complete the pending steps so the floor keeps moving.
 
 ## Pathfinding
 

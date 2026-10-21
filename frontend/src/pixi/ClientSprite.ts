@@ -116,6 +116,12 @@ export class ClientSprite {
     private nav:      NavGrid;
     private easystar: EasyStar.js;
     private onStateChange?: (id: string, state: ClientState) => void;
+    private onDoorReached?: (id: string) => void;
+
+    // True while the client stands on the doorstep (outside), waiting for the backend
+    // to give them a seat. They only walk in once data.targetSeat is known.
+    private _onDoorstep = false;
+    private _doorstepWaitMs = 0;
 
     private clothesColor: number;
     private hairColor:    number;
@@ -126,11 +132,13 @@ export class ClientSprite {
         easystar: EasyStar.js,
         onStateChange?: (id: string, state: ClientState) => void,
         walkTextures?: WalkTextures,
+        onDoorReached?: (id: string) => void,
     ) {
         this.data          = data;
         this.nav           = nav;
         this.easystar      = easystar;
         this.onStateChange = onStateChange;
+        this.onDoorReached = onDoorReached;
         this.walkTextures  = walkTextures ?? null;
 
         const h = hashId(data.id);
@@ -204,6 +212,7 @@ export class ClientSprite {
     sync(next: ClientSpriteData) {
         const prevState = this.data.state;
         this.data = next;
+        this.tryEnterFromDoorstep();
         if (prevState !== next.state) {
             if (prevState === SessionState.Queuing) this.container.cacheAsTexture(false);
             this.redraw();
@@ -340,13 +349,19 @@ export class ClientSprite {
                 break;
 
             case AT_DOOR:
-                this.walkStraightTo({ x: DOOR_X, y: DOOR_Y }, () => {
-                    this.onStateChange?.(this.data.id, ENTERING);
+                // Walk to the doorstep (still outside), tell the backend we are here,
+                // then wait there until a seat is assigned. Nobody enters without a seat.
+                this._onDoorstep = false;
+                this.walkStraightTo({ x: DOOR_X, y: DOOR_Y + this.laneOffset() }, () => {
+                    this._onDoorstep = true;
+                    this._doorstepWaitMs = 0;
+                    this.onDoorReached?.(this.data.id);
+                    this.tryEnterFromDoorstep();
                 });
                 break;
 
             case ENTERING:
-                this.walkStraightTo({ x: INSIDE_X, y: INSIDE_Y }, () => {
+                this.walkStraightTo({ x: INSIDE_X, y: INSIDE_Y + this.laneOffset() }, () => {
                     this.onStateChange?.(this.data.id, SessionState.WalkingToSeat);
                 });
                 break;
@@ -386,6 +401,18 @@ export class ClientSprite {
         }
     }
 
+    /** Several clients go through the door together: spread them over 3 lanes (stable per client). */
+    private laneOffset(): number {
+        return ((hashId(this.data.id) % 3) - 1) * 10;
+    }
+
+    /** Leave the doorstep as soon as the backend has assigned a seat. */
+    private tryEnterFromDoorstep() {
+        if (!this._onDoorstep || this.data.state !== AT_DOOR || !this.data.targetSeat) return;
+        this._onDoorstep = false;
+        this.onStateChange?.(this.data.id, ENTERING);
+    }
+
     // ── Pathfinding helpers ────────────────────────────────────
 
     private walkStraightTo(target: Position, onComplete?: () => void) {
@@ -415,6 +442,15 @@ export class ClientSprite {
 
     update(deltaMS: number) {
         if (this.data.state === SessionState.Queuing) return;
+
+        // Still on the doorstep without a seat: remind the backend every 5 s (lost callback)
+        if (this._onDoorstep && this.data.state === AT_DOOR) {
+            this._doorstepWaitMs += deltaMS;
+            if (this._doorstepWaitMs >= 5000) {
+                this._doorstepWaitMs = 0;
+                this.onDoorReached?.(this.data.id);
+            }
+        }
 
         const isMoving = this.path.length > 0 && this.pathIndex < this.path.length;
 

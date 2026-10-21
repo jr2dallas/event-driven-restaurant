@@ -1,45 +1,35 @@
 package fr.jr2dallas.mappers;
 
+import fr.jr2dallas.domains.Point;
 import fr.jr2dallas.domains.RestaurantStateDto;
 import fr.jr2dallas.domains.WaiterWorker;
 import fr.jr2dallas.generated.model.*;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 
 @Component
 public class RestaurantMapper {
+
     public RestaurantState fromRestaurantStateToRestaurantStateDto(RestaurantStateDto restaurantState, List<WaiterWorker> waiters) {
+        Instant now = Instant.now();
         return new RestaurantState()
-            .sessions(fromSessionsToSessionsDto(restaurantState.getSessions()))
-            .seats(fromSeatsToSeatsDto(restaurantState.getSeats()))
-            .waiters(fromWaitersToWaitersDto(waiters))
+            .sessions(restaurantState.getSessions().stream().map(this::fromSessionToSessionDto).toList())
+            .seats(restaurantState.getSeats().stream().map(this::fromSeatToSeatDto).toList())
+            .waiters(waiters.stream().map(w -> fromWaiterToWaiterDto(w, now)).toList())
             .full(restaurantState.isFull())
             .availableSeats(restaurantState.getAvailableSeats());
-    }
-
-    private List<ClientSession> fromSessionsToSessionsDto(List<fr.jr2dallas.domains.ClientSession> sessions) {
-        return sessions.stream()
-                .map(this::fromSessionToSessionDto)
-                .toList();
     }
 
     private ClientSession fromSessionToSessionDto(fr.jr2dallas.domains.ClientSession session) {
         return new ClientSession()
                 .id(session.getId())
-                .state(fromSessionStateToSessionStateDto(session.getState()))
+                .state(SessionState.fromValue(session.getState().name()))
                 .seatId(session.getSeatId())
-                .tag(session.getTag());
-    }
-
-    private SessionState fromSessionStateToSessionStateDto(fr.jr2dallas.domains.SessionState sessionState){
-        return SessionState.fromValue(sessionState.name());
-    }
-
-    private List<Seat> fromSeatsToSeatsDto(List<fr.jr2dallas.domains.Seat> seats) {
-        return seats.stream()
-                .map(this::fromSeatToSeatDto)
-                .toList();
+                .tag(session.getTag())
+                .orderPhase(OrderPhase.fromValue(session.getOrderPhase().name()));
     }
 
     private Seat fromSeatToSeatDto(fr.jr2dallas.domains.Seat seat) {
@@ -49,20 +39,20 @@ public class RestaurantMapper {
                 .free(seat.isFree());
     }
 
-    private List<Waiter> fromWaitersToWaitersDto(List<fr.jr2dallas.domains.WaiterWorker> waiters) {
-        return waiters.stream()
-                .map(this::fromWaiterToWaiterDto)
-                .toList();
-    }
-
-    private Waiter fromWaiterToWaiterDto(fr.jr2dallas.domains.WaiterWorker waiter) {
+    private Waiter fromWaiterToWaiterDto(WaiterWorker waiter, Instant now) {
         return new Waiter()
                 .id(waiter.getId())
-                .state(fromWaiterStateToWaiterStateDto(waiter.getState()))
-                .targetSessionId(waiter.getTargetSessionId());
+                .state(WaiterState.fromValue(waiter.getState().name()))
+                .targetSessionId(waiter.getTargetSessionId())
+                .targetSessionIds(waiter.getSessionIds())
+                .targetTableId(waiter.getTableId())
+                .dishes(waiter.getDishes())
+                .idlePosition(toPosition(waiter.idlePosition(now)));
     }
 
-    private WaiterState fromWaiterStateToWaiterStateDto(fr.jr2dallas.domains.WaiterState waiterState){
-        return WaiterState.fromValue(waiterState.name());
+    private static Position toPosition(Point p) {
+        return new Position()
+                .x(BigDecimal.valueOf(Math.round(p.x())))
+                .y(BigDecimal.valueOf(Math.round(p.y())));
     }
 }

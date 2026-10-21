@@ -4,10 +4,10 @@ Spring Boot service responsible for cooking orders. It consumes from the `orders
 
 ## Responsibilities
 
-- Consume orders from `orders.in`
-- Simulate cooking asynchronously (configurable duration, default 5 s)
-- Publish `OrderReadyMessage` to `orders.ready`
-- Publish its internal state to Consul KV after every order event
+- Consume orders from `orders.in`, one per burner (`kitchen.burners`, default 2)
+- Simulate cooking (configurable duration, default 5 s)
+- Publish `OrderReadyMessage` to `orders.ready`, then commit the Kafka offset
+- Publish its state (status, dishes on the burners, capacity) to Consul KV after every order event
 - Expose a health endpoint for Consul service discovery
 
 ## Order processing
@@ -15,27 +15,30 @@ Spring Boot service responsible for cooking orders. It consumes from the `orders
 ```
 Kafka orders.in
       │
-      ▼  (concurrency = 3, max.poll.records = 1)
-OrderConsumer.handleOrder()
+      ▼  (concurrency = kitchen.burners, max.poll.records = 1)
+OrderConsumer.handleOrder()          ← one listener thread = one burner
       │
       ├── kitchenService.startCooking(orderId)  → updates ConcurrentHashMap + Consul KV
-      │
-      ├── ack.acknowledge()                      → Kafka offset committed immediately
-      │
-      └── cookingScheduler.schedule(delay)       → async, does not block Kafka thread
-                │
-                ├── kitchenService.finishCooking(orderId) → updates ConcurrentHashMap + Consul KV
-                │
-                └── kafkaTemplate.send("orders.ready", ...)
+      ├── Thread.sleep(cooking duration)        → the burner is busy
+      ├── kitchenService.finishCooking(orderId) → updates ConcurrentHashMap + Consul KV
+      ├── kafkaTemplate.send("orders.ready").get()
+      └── ack.acknowledge()                      → offset committed only now
 ```
 
-### Why `max.poll.records=1` + `concurrency=3`
+### A kitchen has a real capacity
 
-`max.poll.records=1` ensures each Kafka consumer thread receives exactly one order at a time, which matches the visual one-cook-per-order constraint. `concurrency=3` creates three consumer threads per instance, allowing up to three orders to be cooked in parallel.
+Each listener thread cooks one dish at a time, so a kitchen never holds more orders than it has
+burners. Extra orders stay in Kafka: the `orders.in` consumer lag **is** the kitchen backlog, and
+whichever kitchen frees a burner first takes the next order. Hiring a kitchen therefore adds
+throughput (an earlier version acknowledged immediately and cooked in a separate pool, so one
+kitchen could cook an unlimited number of dishes and extra kitchens did nothing).
 
-### Why the cooking pool is separate from the Kafka thread
+### At-least-once
 
-`ack.acknowledge()` is called immediately after scheduling the cooking task, not after the dish is ready. This frees the Kafka consumer thread to pick up the next order without waiting 5 seconds, while the cooking timer runs independently on a `ScheduledExecutorService`.
+The offset is committed after `orders.ready` has been acknowledged by Kafka. If a kitchen is
+stopped mid-cooking (scale down, crash), the order is redelivered to another kitchen. The
+restaurant-service ignores duplicate "ready" messages by `orderId`. `stop_grace_period: 20s` in
+Compose lets a kitchen finish the dishes on its burners before stopping.
 
 ## State tracking
 
@@ -49,7 +52,7 @@ The restaurant-service reads this key to aggregate kitchen states without direct
 
 ## Horizontal scaling
 
-All instances share the `kitchen-group` Kafka consumer group. Kafka automatically distributes the 10 partitions across live instances — adding an instance increases throughput proportionally up to 10 instances.
+All instances share the `kitchen-group` Kafka consumer group. `orders.in` has 24 partitions (9 kitchen stations × 2 burners, with headroom); Kafka spreads them over every burner of every live instance. The `CooperativeStickyAssignor` only moves the partitions that need to move when a kitchen joins or leaves, instead of pausing every kitchen.
 
 Each instance registers independently with Consul and writes its own KV entry, so the restaurant-service always sees the real per-instance state regardless of how many instances are running.
 
@@ -57,7 +60,9 @@ Each instance registers independently with Consul and writes its own KV entry, s
 
 | Property | Default | Description |
 |---|---|---|
+| `kitchen.burners` (`KITCHEN_BURNERS`) | `2` | Dishes cooked in parallel by one instance |
 | `kitchen.cooking.duration-ms` | `5000` | Simulated cooking time per order |
+| `kitchen.ready-send-timeout-ms` | `10000` | Max wait for Kafka to accept the "ready" message |
 
 ## Running locally
 

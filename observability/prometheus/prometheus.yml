@@ -9,9 +9,18 @@ scrape_configs:
     static_configs:
       - targets: ['restaurant-service:8080']
 
-  # kitchen-service has 2 replicas — Docker DNS round-robins between them.
-  # For per-instance metrics, replace with explicit container hostnames.
+  # Every kitchen-service instance is discovered through Consul, so each kitchen is scraped
+  # on its own (load, burners, Kafka lag per instance) — including kitchens spawned at runtime.
   - job_name: 'kitchen-service'
     metrics_path: '/actuator/prometheus'
-    static_configs:
-      - targets: ['kitchen-service:8081']
+    consul_sd_configs:
+      - server: 'consul:8500'
+        services: ['kitchen-service']
+    relabel_configs:
+      # Skip stopped kitchens Consul has not deregistered yet
+      - source_labels: [__meta_consul_health]
+        regex: passing
+        action: keep
+      # instance label = Consul service id (kitchen-service-<uuid>), same id as the floor view
+      - source_labels: [__meta_consul_service_id]
+        target_label: instance

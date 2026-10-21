@@ -18,11 +18,13 @@ spring:
         spring.json.value.default.type: fr.jr2dallas.generated.model.OrderMessage
         spring.json.use.type.headers: false
         max.poll.records: 1
+        # Only partitions that actually move are paused when a kitchen joins or leaves
+        partition.assignment.strategy: org.apache.kafka.clients.consumer.CooperativeStickyAssignor
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
     listener:
-      ack-mode: RECORD
+      ack-mode: MANUAL_IMMEDIATE
 
   cloud:
     consul:
@@ -45,5 +47,8 @@ server:
   port: 8081
 
 kitchen:
+  # Dishes cooked in parallel by one kitchen (one Kafka listener thread per burner)
+  burners: ${KITCHEN_BURNERS:2}
   cooking:
     duration-ms: 5000
+  ready-send-timeout-ms: 10000
