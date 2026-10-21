@@ -7,11 +7,14 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.cloud.consul.discovery.ConsulDiscoveryProperties;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -39,6 +42,10 @@ public class KitchenService {
 
     private final Counter ordersProcessedCounter;
 
+    // Burners = dishes cooked in parallel (one Kafka listener thread per burner)
+    @Value("${kitchen.burners:2}")
+    private int burners = 2;
+
     public KitchenService(RestTemplateBuilder builder,
                           ConsulDiscoveryProperties discoveryProperties,
                           ObjectMapper objectMapper,
@@ -51,6 +58,10 @@ public class KitchenService {
                 .description("Orders currently being cooked")
                 .register(meterRegistry);
 
+        Gauge.builder("kitchen.burners.capacity", this, k -> k.burners)
+                .description("Number of burners (dishes cooked in parallel)")
+                .register(meterRegistry);
+
         this.ordersProcessedCounter = Counter.builder("kitchen.orders.processed")
                 .description("Total orders finished cooking")
                 .register(meterRegistry);
@@ -60,6 +71,27 @@ public class KitchenService {
     private void init() {
         kitchenState = KitchenState.STARTING;
         publishStateToConsul();
+    }
+
+    /** Ready to cook as soon as the application (and its Kafka listeners) are up. */
+    @EventListener(ApplicationReadyEvent.class)
+    public synchronized void onReady() {
+        if (waitingOrders.isEmpty()) kitchenState = KitchenState.IDLE;
+        publishStateToConsul();
+    }
+
+    /** Remove our KV entry so a stopped kitchen does not linger in the floor view. */
+    @PreDestroy
+    public void onShutdown() {
+        try {
+            restTemplate.delete(kvUrl());
+        } catch (Exception e) {
+            log.debug("[Kitchen] Unable to delete Consul KV entry: {}", e.getMessage());
+        }
+    }
+
+    public int capacity() {
+        return burners;
     }
 
     public String getStatus() {
@@ -92,14 +124,19 @@ public class KitchenService {
             KitchenInstance kitchenInstance = new KitchenInstance()
                     .instanceId(instanceId)
                     .status(kitchenState)
-                    .waitingOrders(waitingOrders.size());
+                    .waitingOrders(waitingOrders.size())
+                    .capacity(burners);
 
             restTemplate.put(
-                    "http://" + consulHost + ":" + consulPort + "/v1/kv/kitchen-state/" + instanceId,
+                    kvUrl(),
                     objectMapper.writeValueAsString(kitchenInstance)
             );
         } catch (Exception e) {
             log.warn("[Kitchen] Unable to publish state to Consul", e);
         }
+    }
+
+    private String kvUrl() {
+        return "http://" + consulHost + ":" + consulPort + "/v1/kv/kitchen-state/" + discoveryProperties.getInstanceId();
     }
 }
