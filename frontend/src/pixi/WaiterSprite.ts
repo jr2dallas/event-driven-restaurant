@@ -15,7 +15,11 @@ const IDLE_SLOTS: Position[] = [
     { x: 856, y: 452 }, { x: 888, y: 452 }, { x: 920, y: 452 },
     { x: 856, y: 605 }, { x: 888, y: 605 }, { x: 920, y: 605 },
 ];
-const TAKING_ORDER_DURATION_MS = 2500;
+// Taking orders: a base time plus one per client of the table (2.5 s for a single client)
+const TAKING_ORDER_BASE_MS       = 1500;
+const TAKING_ORDER_PER_CLIENT_MS = 1000;
+// Closer than this to the pass = already there (no detour before delivering)
+const AT_PASS_RADIUS = 40;
 
 // ── Uniform colours ───────────────────────────────────────────
 const UNIFORM_FILL   = 0xffffff;
@@ -61,6 +65,21 @@ function drawPlate(g: PIXI.Graphics) {
      .fill({ color: FOOD_COLOR });
 }
 
+/** One plate, or a tray holding one plate per client of the table. */
+function drawTray(g: PIXI.Graphics, plates: number) {
+    if (plates <= 1) { drawPlate(g); return; }
+    g.clear();
+    g.roundRect(-11, -9, 22, 18, 3)
+     .fill({ color: 0x9ca3af, alpha: 0.9 })
+     .stroke({ color: 0x6b7280, width: 1 });
+    const spots = [[-5, -4], [5, -4], [-5, 4], [5, 4]];
+    for (let i = 0; i < Math.min(plates, spots.length); i++) {
+        const [cx, cy] = spots[i];
+        g.circle(cx, cy, 4.5).fill({ color: PLATE_FILL }).stroke({ color: PLATE_STROKE, width: 1 });
+        g.circle(cx, cy, 2).fill({ color: FOOD_COLOR });
+    }
+}
+
 // ── Main sprite ───────────────────────────────────────────────
 export class WaiterSprite {
     /** Position container used by SceneManager to read x/y */
@@ -94,7 +113,10 @@ export class WaiterSprite {
     // and apply it only once the waiter physically reaches the kitchen.
     private _headingToKitchen  = false;
     private _pendingDelivery: WaiterSpriteData | null = null;
+    // Fallback idle slot when the backend sends no idle position
     private _idlePos: Position;
+    // Delivering: false while walking to the pass to collect the dishes
+    private _carrying = false;
 
     constructor(data: WaiterSpriteData, nav: NavGrid, easystar: EasyStar.js, slotIndex: number) {
         this.data     = data;
@@ -153,14 +175,18 @@ export class WaiterSprite {
             this._pendingDelivery  = null;
         }
 
+        const prevIdle = this.data.idlePosition;
         this.data = next;
         this.redraw();
 
         const stateChanged  = prevState !== next.state;
         const targetChanged = prevTargetId !== next.targetSessionId;
+        // Idle spot moved (pass wait over → back to the sector post)
+        const idleMoved = next.state === WaiterState.Idle && !stateChanged
+            && (prevIdle?.x !== next.idlePosition?.x || prevIdle?.y !== next.idlePosition?.y);
 
         if (stateChanged || targetChanged) this._pendingCallback = false;
-        if (stateChanged || (targetChanged && !!next.targetPosition)) {
+        if (stateChanged || (targetChanged && !!next.targetPosition) || idleMoved) {
             this.handleStateEnter(next.state);
         }
     }
@@ -193,8 +219,8 @@ export class WaiterSprite {
         if (s === WaiterState.WalkingToKitchen || this._headingToKitchen) {
             drawNotepad(this.item);
             this.item.visible = true;
-        } else if (s === WaiterState.Delivering) {
-            drawPlate(this.item);
+        } else if (s === WaiterState.Delivering && this._carrying) {
+            drawTray(this.item, this.data.dishes || 1);
             this.item.visible = true;
         } else {
             this.item.visible = false;
@@ -222,6 +248,8 @@ export class WaiterSprite {
         this._onComplete = undefined;
         this._isWalking  = false;
 
+        if (state !== WaiterState.Delivering) this._carrying = false;
+
         // Clear kitchen flag unless we are entering WALKING_TO_KITCHEN right now
         if (state !== WaiterState.WalkingToKitchen) {
             this._headingToKitchen = false;
@@ -230,17 +258,41 @@ export class WaiterSprite {
 
         switch (state) {
 
-            case WaiterState.WalkingToClient:
             case WaiterState.Delivering: {
+                if (!this.data.targetPosition) {
+                    console.warn(`[Waiter ${this.data.id.slice(-4)}] ${state} without targetPosition`);
+                    break;
+                }
+                const toTable = () => {
+                    this._carrying = true;
+                    this.redraw();
+                    this._isWalking = true;
+                    this.walkAStar(this.data.targetPosition ?? KITCHEN_POS, () => {
+                        if (this._pendingCallback) return;
+                        this._pendingCallback = true;
+                        void notifyWaiterState(this.data.id, WaiterState.Idle);
+                    });
+                };
+                const atPass = Math.hypot(this.container.x - KITCHEN_POS.x, this.container.y - KITCHEN_POS.y) <= AT_PASS_RADIUS;
+                if (atPass) {
+                    toTable();
+                } else {
+                    // Dishes are collected at the pass first
+                    this._carrying = false;
+                    this.redraw();
+                    this._isWalking = true;
+                    this.walkAStar(KITCHEN_POS, toTable);
+                }
+                break;
+            }
+
+            case WaiterState.WalkingToClient: {
                 if (this.data.targetPosition) {
-                    const arrivalState = this.data.state === WaiterState.Delivering
-                        ? WaiterState.Idle
-                        : WaiterState.TakingOrder;
                     this._isWalking = true;
                     this.walkAStar(this.data.targetPosition, () => {
                         if (this._pendingCallback) return;
                         this._pendingCallback = true;
-                        void notifyWaiterState(this.data.id, arrivalState);
+                        void notifyWaiterState(this.data.id, WaiterState.TakingOrder);
                     });
                 } else {
                     // Missing target position — next sync with a valid position
@@ -251,11 +303,14 @@ export class WaiterSprite {
             }
 
             case WaiterState.TakingOrder:
-                this.playTakingOrderAnimation(() => {
-                    if (this._pendingCallback) return;
-                    this._pendingCallback = true;
-                    void notifyWaiterState(this.data.id, WaiterState.WalkingToKitchen);
-                });
+                this.playTakingOrderAnimation(
+                    TAKING_ORDER_BASE_MS + TAKING_ORDER_PER_CLIENT_MS * Math.max(1, this.data.targetSessionIds.length),
+                    () => {
+                        if (this._pendingCallback) return;
+                        this._pendingCallback = true;
+                        void notifyWaiterState(this.data.id, WaiterState.WalkingToKitchen);
+                    },
+                );
                 break;
 
             case WaiterState.WalkingToKitchen:
@@ -278,13 +333,12 @@ export class WaiterSprite {
                 break;
 
             case WaiterState.Idle: {
-                const d = Math.hypot(
-                    this.container.x - this._idlePos.x,
-                    this.container.y - this._idlePos.y,
-                );
+                // Backend-chosen spot: the waiter's sector post, or the pass while waiting for dishes
+                const spot = this.data.idlePosition ?? this._idlePos;
+                const d = Math.hypot(this.container.x - spot.x, this.container.y - spot.y);
                 if (d > 32) {
                     this._isWalking = true;
-                    this.walkAStar(this._idlePos);
+                    this.walkAStar(spot);
                 }
                 break;
             }
@@ -293,7 +347,7 @@ export class WaiterSprite {
 
     // ── Order-taking animation ────────────────────────────────
 
-    private playTakingOrderAnimation(onDone: () => void) {
+    private playTakingOrderAnimation(durationMs: number, onDone: () => void) {
         let elapsed  = 0;
         let blinkOn  = true;
         let lastTime = performance.now();
@@ -310,7 +364,7 @@ export class WaiterSprite {
                 this.badge.alpha = 0.2;
             }
 
-            if (elapsed < TAKING_ORDER_DURATION_MS) {
+            if (elapsed < durationMs) {
                 this._takingOrderRaf = requestAnimationFrame(blink);
             } else {
                 this._takingOrderRaf = null;

@@ -10,15 +10,26 @@ import { resolveSeatById, resolveWaiterServicePosition } from '../pathfinding/re
 interface SyncState {
     lastState: RestaurantState | null;
     isPolling: boolean;
+    isStreaming: boolean;
     pollInterval: number;
     error: string | null;
     setPollInterval: (ms: number) => void;
+    /** Live updates pushed by the backend (SSE), with polling as a fallback while disconnected */
+    connect: () => void;
+    disconnect: () => void;
     startPolling: () => void;
     stopPolling: () => void;
     _tick: () => Promise<void>;
+    _apply: (next: RestaurantState) => Promise<void>;
 }
 
+const STREAM_URL = '/internal/restaurant/state/stream';
+
 let _handle: ReturnType<typeof setInterval> | null = null;
+let _source: EventSource | null = null;
+// Pushed states are applied one at a time; if several arrive meanwhile, only the latest matters
+let _applying = false;
+let _queued: RestaurantState | null = null;
 let _spawnCounter = 0;
 const _spawnSides = new Map<string, 'top' | 'bottom'>();
 
@@ -41,8 +52,41 @@ const IN_ROOM_STATES: SessionState[] = [
 export const useRestaurantSyncStore = create<SyncState>((set, get) => ({
     lastState: null,
     isPolling: false,
+    isStreaming: false,
     pollInterval: 2000,
     error: null,
+
+    connect() {
+        if (_source) return;
+        if (typeof EventSource === 'undefined') { get().startPolling(); return; }
+
+        // Poll until the stream is up (and whenever it drops — EventSource reconnects by itself)
+        get().startPolling();
+        const source = new EventSource(STREAM_URL);
+        _source = source;
+
+        source.onopen = () => {
+            get().stopPolling();
+            set({ isStreaming: true, error: null });
+        };
+        source.addEventListener('state', (e) => {
+            try {
+                enqueue(JSON.parse((e as MessageEvent).data) as RestaurantState);
+            } catch (err) {
+                console.error('[restaurantSyncStore] bad stream payload', err);
+            }
+        });
+        source.onerror = () => {
+            set({ isStreaming: false });
+            if (!get().isPolling) get().startPolling();
+        };
+    },
+
+    disconnect() {
+        if (_source) { _source.close(); _source = null; }
+        set({ isStreaming: false });
+        get().stopPolling();
+    },
 
     setPollInterval(ms) {
         set({ pollInterval: ms });
@@ -66,7 +110,15 @@ export const useRestaurantSyncStore = create<SyncState>((set, get) => ({
         try {
             const res = await fetch('/internal/restaurant/state');
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const next: RestaurantState = await res.json();
+            enqueue(await res.json());
+        } catch (err: any) {
+            console.error('[restaurantSyncStore] tick error', err);
+            set({ error: err?.message ?? 'Unknown error' });
+        }
+    },
+
+    async _apply(next: RestaurantState) {
+        try {
 
             // ── 1. Spawn / page-reload teleport ───────────────────
             for (const session of (next.sessions ?? [])) {
@@ -158,7 +210,15 @@ export const useRestaurantSyncStore = create<SyncState>((set, get) => ({
                         targetPos = resolveWaiterServicePosition(ts.seatId) ?? resolveSeatById(ts.seatId);
                     }
                 }
-                waiterStore.upsert(waiter.id, waiter.state, waiter.targetSessionId ?? null, targetPos);
+                const idle = waiter.idlePosition;
+                waiterStore.upsert(waiter.id, {
+                    state:            waiter.state,
+                    targetSessionId:  waiter.targetSessionId ?? null,
+                    targetPos,
+                    targetSessionIds: waiter.targetSessionIds ?? [],
+                    dishes:           waiter.dishes ?? 0,
+                    idlePosition:     idle ? { x: Number(idle.x), y: Number(idle.y) } : null,
+                });
             }
 
             for (const [id] of waiterStore.waiters) {
@@ -168,8 +228,25 @@ export const useRestaurantSyncStore = create<SyncState>((set, get) => ({
             set({ lastState: next, error: null });
 
         } catch (err: any) {
-            console.error('[restaurantSyncStore] tick error', err);
+            console.error('[restaurantSyncStore] apply error', err);
             set({ error: err?.message ?? 'Unknown error' });
         }
     },
 }));
+
+function enqueue(next: RestaurantState) {
+    _queued = next;
+    if (_applying) return;
+    _applying = true;
+    void (async () => {
+        try {
+            while (_queued) {
+                const state = _queued;
+                _queued = null;
+                await useRestaurantSyncStore.getState()._apply(state);
+            }
+        } finally {
+            _applying = false;
+        }
+    })();
+}

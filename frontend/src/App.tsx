@@ -6,7 +6,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import { useKitchenStore } from './store/kitchenStore'
 import { useWaiterSpritesStore } from './store/waiterSpritesStore'
 import { useClientSpritesStore } from './store/clientSpritesStore'
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 
 // ── Waiter toast ──────────────────────────────────────────────
 
@@ -58,6 +58,41 @@ function StaffToast({ toast }: { toast: Toast }) {
         >
             {toast.message}
         </div>
+    )
+}
+
+// ── Autoscaling toggles ───────────────────────────────────────
+
+type AutoscalingSettings = { waiters: boolean; kitchens: boolean }
+
+function AutoscaleToggle({ kind, label }: { kind: keyof AutoscalingSettings; label: string }) {
+    const [settings, setSettings] = useState<AutoscalingSettings | null>(null)
+
+    useEffect(() => {
+        fetch('/internal/autoscaling')
+            .then(r => (r.ok ? r.json() : null))
+            .then(s => s && setSettings(s))
+            .catch(() => { /* backend not ready */ })
+    }, [])
+
+    const toggle = async () => {
+        if (!settings) return
+        const next = { ...settings, [kind]: !settings[kind] }
+        const res = await fetch('/internal/autoscaling', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(next),
+        })
+        if (res.ok) setSettings(await res.json())
+    }
+
+    const on = settings?.[kind] ?? false
+    return (
+        <button onClick={toggle} disabled={!settings}
+            title={`Embauche / licenciement automatique des ${label}`}
+            className={`${btnBase} ${on ? 'bg-emerald-600' : 'bg-white/10'}`}>
+            {on ? `🤖 Auto ${label} ON` : `🤖 Auto ${label}`}
+        </button>
     )
 }
 
@@ -154,33 +189,27 @@ function App() {
     }, [showToast])
 
     const hireChef = useCallback(async () => {
-        const before = useKitchenStore.getState().chefs.length
         setChefLoading(true)
         try {
             const res = await fetch('/internal/kitchen/instances', { method: 'POST' })
             if (!res.ok) { setChefLoading(false); return }
+            useKitchenStore.getState().addStartingChef()
             useKitchenStore.getState().triggerFastPoll()
             showToast('hire', 'chef')
         } catch { setChefLoading(false); return }
-        const tid = setTimeout(() => setChefLoading(false), 8000)
-        const unsub = useKitchenStore.subscribe(({ chefs }) => {
-            if (chefs.length > before) { clearTimeout(tid); unsub(); setChefLoading(false) }
-        })
+        setChefLoading(false)
     }, [showToast])
 
     const fireChef = useCallback(async () => {
-        const before = useKitchenStore.getState().chefs.length
         setChefLoading(true)
         try {
             const res = await fetch('/internal/kitchen/instances', { method: 'DELETE' })
             if (!res.ok) { setChefLoading(false); return }
+            useKitchenStore.getState().removeLastChef()
             useKitchenStore.getState().triggerFastPoll()
             showToast('fire', 'chef')
         } catch { setChefLoading(false); return }
-        const tid = setTimeout(() => setChefLoading(false), 8000)
-        const unsub = useKitchenStore.subscribe(({ chefs }) => {
-            if (chefs.length < before) { clearTimeout(tid); unsub(); setChefLoading(false) }
-        })
+        setChefLoading(false)
     }, [showToast])
 
     return (
@@ -223,6 +252,7 @@ function App() {
                             className={`${btnBase} bg-violet-600`}>
                             {waiterLoading ? '⏳ − Waiter' : '− Waiter'}
                         </button>
+                        <AutoscaleToggle kind="waiters" label="serveurs" />
                         <span className="opacity-20">|</span>
                         <button onClick={hireChef} disabled={chefLoading}
                             className={`${btnBase} bg-amber-700`}>
@@ -232,6 +262,7 @@ function App() {
                             className={`${btnBase} bg-amber-800`}>
                             {chefLoading ? '⏳ − Chef' : '− Chef'}
                         </button>
+                        <AutoscaleToggle kind="kitchens" label="cuisines" />
                     </div>
                 </header>
 

@@ -99,10 +99,22 @@ export class KitchenSprite {
         this.container.position.set(data.position.x, data.position.y);
 
         this.redraw();
+        this.updateLabel(data);
         if (this.status === KitchenState.Unreachable) this.bg.alpha = 0.4;
     }
 
+    /** "Chef 1/2" = dishes on the burners / burners. */
+    private updateLabel(data: ChefData) {
+        const text = data.capacity > 0 ? `Chef ${data.waitingOrders}/${data.capacity}` : 'Chef';
+        if (this.label.text !== text) this.label.text = text;
+    }
+
     sync(next: ChefData) {
+        // Station can change (a ghost placeholder replaced by the real instance)
+        if (this.container.x !== next.position.x || this.container.y !== next.position.y)
+            this.container.position.set(next.position.x, next.position.y);
+        this.updateLabel(next);
+
         const statusChanged = this.status !== next.status;
         this.cookingStartedAt = next.cookingStartedAt;
         if (!statusChanged) return;

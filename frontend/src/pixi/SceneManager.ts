@@ -168,6 +168,8 @@ export class SceneManager {
                     data, this.nav, this.easystar,
                     (sid, next) => this.handleClientStateChange(sid, next),
                     walkTex,
+                    // On the doorstep (outside): ask the backend for a seat
+                    (sid) => void notifyClientState(sid, SessionState.AtEntrance),
                 );
                 this.clientSprites.set(id, sprite);
                 this.spriteLayer.addChild(sprite.container);
@@ -263,7 +265,7 @@ export class SceneManager {
         const store = useClientSpritesStore.getState();
         switch (next) {
             case ENTERING:
-                void notifyClientState(sessionId, SessionState.AtEntrance);
+                // AT_ENTRANCE was already reported from the doorstep; the client has a seat now
                 store.transition(sessionId, ENTERING);
                 break;
             case SessionState.Seated:

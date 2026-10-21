@@ -5,6 +5,7 @@ import { KitchenState } from '../api/generated/model/kitchen-state';
 
 import { SessionState } from '../api/generated/model/session-state'
 import { WaiterState } from '../api/generated/model/waiter-state'
+import { OrderPhase } from '../api/generated/model/order-phase'
 
 const MAX_SAMPLES    = 20
 const RATE_WINDOW_MS = 60_000
@@ -124,8 +125,9 @@ useRestaurantSyncStore.subscribe(state => {
     const kitchenLoad     = chefsCooking > 0
         ? (waiting / chefsCooking).toFixed(1)
         : waiting > 0 ? '∞' : '0'
-    const ordersInKitchen = chefs.reduce((sum, c) => sum + c.waitingOrders, 0)
-    const ordersReady     = waiters.filter(w => w.state === WaiterState.Delivering).length
+    // Order phases come from the backend: in the kitchen (queued or on a burner) vs ready at the pass / on a tray
+    const ordersInKitchen = sessions.filter(s => s.orderPhase === OrderPhase.InKitchen).length
+    const ordersReady     = sessions.filter(s => s.orderPhase === OrderPhase.ReadyAtPass).length
 
     useStatsStore.setState({
         queue, seated, waiting, eating, leaving, total,
